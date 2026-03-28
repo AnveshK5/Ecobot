@@ -1,13 +1,13 @@
 import { useAppData } from '@/hooks/useAppData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Leaf, TrendingUp, Target, Zap, Flame, Award, CheckCircle2, Clock } from 'lucide-react';
+import { Leaf, TrendingUp, Target, Flame, Award, CheckCircle2, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 export default function DashboardPage() {
   const {
     currentUser, userActivities, activities, totalCO2Today, totalCO2All,
-    weeklyData, ecoScore, streak, motivationalMessage, tasks,
+    weeklyData, ecoScore, streak, motivationalMessage, tasks, aiSuggestions, leaderboard,
   } = useAppData();
   const goal = currentUser?.daily_goal_kgCO2 || 10;
   const progress = Math.min((totalCO2Today / goal) * 100, 100);
@@ -189,6 +189,42 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="border-none shadow-md">
+          <CardHeader>
+            <CardTitle className="text-base">AI Suggestions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {aiSuggestions.length > 0 ? aiSuggestions.map((suggestion) => (
+              <div key={suggestion} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
+                {suggestion}
+              </div>
+            )) : (
+              <p className="text-sm text-muted-foreground">Suggestions will appear once your activity history loads.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md">
+          <CardHeader>
+            <CardTitle className="text-base">Leaderboard</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {leaderboard.length > 0 ? leaderboard.map((entry, index) => (
+              <div key={entry.userId} className="flex items-center justify-between rounded-xl bg-secondary/40 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{index + 1}. {entry.name}</p>
+                  <p className="text-xs text-muted-foreground">{entry.badgeCount} badges earned</p>
+                </div>
+                <span className="text-sm font-semibold text-primary">{entry.averageEmission} kg avg</span>
+              </div>
+            )) : (
+              <p className="text-sm text-muted-foreground">Leaderboard data will appear once the backend is connected.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

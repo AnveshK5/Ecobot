@@ -18,10 +18,10 @@ export default function AddActivityPage() {
   const selected = activities.find(a => a.activity_id === selectedActivity);
   const preview = selected && quantity ? (parseFloat(quantity) * selected.emission_factor).toFixed(2) : null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedActivity || !quantity) return;
-    addUserActivity(selectedActivity, parseFloat(quantity), notes);
+    await addUserActivity(selectedActivity, parseFloat(quantity), notes);
     toast.success('Activity logged!', { description: `${preview} kg CO₂ added.` });
     setSelectedActivity('');
     setQuantity('');

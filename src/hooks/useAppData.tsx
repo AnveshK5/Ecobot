@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useCallback,
   useState,
   type ReactNode
 } from "react";
@@ -378,6 +379,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setChatLog(mapChats(chats.chats));
         setAiSuggestions(suggestions.suggestions);
         setLeaderboard(board.leaderboard);
+      } catch (error) {
+        console.error("Failed to bootstrap app data", error);
       } finally {
         setLoading(false);
       }
@@ -386,7 +389,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     void bootstrap();
   }, [token]);
 
-  const addChatMessage = (message: string, sender: "user" | "AI") => {
+  const addChatMessage = useCallback((message: string, sender: "user" | "AI") => {
     setChatLog((prev) => [
       ...prev,
       {
@@ -397,9 +400,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         timestamp: new Date().toISOString()
       }
     ]);
-  };
+  }, [currentUser?.user_id]);
 
-  async function refreshActivityState(activeToken = token) {
+  const refreshActivityState = useCallback(async (activeToken = token) => {
     if (!activeToken) return;
 
     const [history, carbon, profile, suggestions, board] = await Promise.all([
@@ -425,9 +428,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
     setAiSuggestions(suggestions.suggestions);
     setLeaderboard(board.leaderboard);
-  }
+  }, [token]);
 
-  async function addUserActivity(activityId: string, quantity: number, notes: string) {
+  const addUserActivity = useCallback(async (activityId: string, quantity: number, notes: string) => {
     if (!token) return;
 
     await apiRequest("/activity/log", {
@@ -444,9 +447,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
 
     await refreshActivityState();
-  }
+  }, [refreshActivityState, token]);
 
-  async function sendChatMessage(message: string) {
+  const sendChatMessage = useCallback(async (message: string) => {
     if (!token || !currentUser) return;
 
     addChatMessage(message, "user");
@@ -492,9 +495,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
 
     addChatMessage(response.response, "AI");
-  }
+  }, [activities, addChatMessage, currentUser, token]);
 
-  async function updatePreferences(updates: Partial<Preferences>) {
+  const updatePreferences = useCallback(async (updates: Partial<Preferences>) => {
     if (!token || !currentUser) return;
 
     await apiRequest<{ preferences: BackendPreferences }>("/user/preferences", {
@@ -515,9 +518,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           }
         : null
     );
-  }
+  }, [currentUser, preferences?.diet_type, preferences?.energy_usage_type, preferences?.transport_mode, token]);
 
-  function addTask(title: string, time: string) {
+  const addTask = useCallback((title: string, time: string) => {
     setTasks((prev) => [
       ...prev,
       {
@@ -529,19 +532,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         created_at: new Date().toISOString()
       }
     ]);
-  }
+  }, [currentUser?.user_id]);
 
-  function toggleTask(taskId: string) {
+  const toggleTask = useCallback((taskId: string) => {
     setTasks((prev) =>
       prev.map((task) =>
         task.task_id === taskId ? { ...task, completed: !task.completed } : task
       )
     );
-  }
+  }, []);
 
-  function deleteTask(taskId: string) {
+  const deleteTask = useCallback((taskId: string) => {
     setTasks((prev) => prev.filter((task) => task.task_id !== taskId));
-  }
+  }, []);
 
   const totalCO2Today = summary.daily;
   const totalCO2All = useMemo(
@@ -593,49 +596,30 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     return "You are above your daily goal today. Check the AI suggestions for the easiest category to improve next.";
   }, [loading, totalCO2Today]);
 
-  const value = useMemo<AppDataContextType>(
-    () => ({
-      currentUser,
-      activities,
-      userActivities,
-      chatLog,
-      tasks,
-      preferences,
-      loading,
-      addUserActivity,
-      addChatMessage,
-      sendChatMessage,
-      updatePreferences,
-      addTask,
-      toggleTask,
-      deleteTask,
-      totalCO2Today,
-      totalCO2All,
-      weeklyData,
-      ecoScore,
-      streak,
-      motivationalMessage,
-      aiSuggestions,
-      leaderboard
-    }),
-    [
-      currentUser,
-      activities,
-      userActivities,
-      chatLog,
-      tasks,
-      preferences,
-      loading,
-      totalCO2Today,
-      totalCO2All,
-      weeklyData,
-      ecoScore,
-      streak,
-      motivationalMessage,
-      aiSuggestions,
-      leaderboard
-    ]
-  );
+  const value: AppDataContextType = {
+    currentUser,
+    activities,
+    userActivities,
+    chatLog,
+    tasks,
+    preferences,
+    loading,
+    addUserActivity,
+    addChatMessage,
+    sendChatMessage,
+    updatePreferences,
+    addTask,
+    toggleTask,
+    deleteTask,
+    totalCO2Today,
+    totalCO2All,
+    weeklyData,
+    ecoScore,
+    streak,
+    motivationalMessage,
+    aiSuggestions,
+    leaderboard
+  };
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
 }
