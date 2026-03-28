@@ -5,8 +5,8 @@ import { createWeeklyReports } from "./services/weekly-report.service.js";
 
 const app = createApp();
 
-const server = app.listen(env.PORT, async () => {
-  console.log(`Backend listening on http://localhost:${env.PORT}`);
+const server = app.listen(env.PORT, env.HOST, async () => {
+  console.log(`Backend listening on http://${env.HOST}:${env.PORT}`);
   await prisma.$connect();
   await createWeeklyReports();
 });

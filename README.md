@@ -60,6 +60,7 @@ The frontend automatically signs in with this seeded demo user if no token exist
    `npm run dev`
 
 The frontend runs on `http://localhost:8080` and the backend on `http://localhost:4000`.
+For LAN testing on the current network, use `http://10.1.63.51:8080` for the frontend and `http://10.1.63.51:4000` for the backend.
 
 ## Free-Tier Hosting
 
