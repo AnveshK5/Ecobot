@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ActivityType {
+  transport
+  food
+  energy
+  shopping
+}
+
+model User {
+  id             String          @id @default(uuid()) @db.Uuid
+  name           String
+  email          String          @unique
+  passwordHash   String          @map("password_hash")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  activities     UserActivity[]
+  chatLogs       ChatLog[]
+  preferences    Preference?
+  weeklyReports  WeeklyReport[]
+  badges         UserBadge[]
+
+  @@map("users")
+}
+
+model Activity {
+  id            String         @id @default(uuid()) @db.Uuid
+  type          ActivityType
+  description   String
+  carbonValue   Float          @map("carbon_value")
+  userActivities UserActivity[]
+
+  @@map("activities")
+}
+
+model UserActivity {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  activityId      String    @map("activity_id") @db.Uuid
+  customInput     Json      @map("custom_input")
+  carbonEmission  Float     @map("carbon_emission")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activity        Activity  @relation(fields: [activityId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@map("user_activities")
+}
+
+model ChatLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  message   String
+  response  String
+  timestamp DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, timestamp])
+  @@map("chat_log")
+}
+
+model Preference {
+  id              String  @id @default(uuid()) @db.Uuid
+  userId          String  @unique @map("user_id") @db.Uuid
+  dietType        String? @map("diet_type")
+  transportMode   String? @map("transport_mode")
+  energyUsageType String? @map("energy_usage_type")
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("preferences")
+}
+
+model WeeklyReport {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  weekStart        DateTime @map("week_start")
+  totalEmission    Float    @map("total_emission")
+  summary          String
+  createdAt        DateTime @default(now()) @map("created_at")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart])
+  @@map("weekly_reports")
+}
+
+model Badge {
+  id          String     @id @default(uuid()) @db.Uuid
+  key         String     @unique
+  name        String
+  description String
+  users       UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  badgeId    String   @map("badge_id") @db.Uuid
+  awardedAt  DateTime @default(now()) @map("awarded_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
