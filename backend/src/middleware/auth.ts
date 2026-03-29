@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import { getUserFromSession } from "../utils/auth.js";
+import { UserRole } from "@prisma/client";
+import { getUserFromSession, isSuperuser } from "../utils/auth.js";
 import { ApiError } from "../utils/http.js";
 
 export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
@@ -19,9 +20,23 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
 }
 
 export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
-  if (!req.user?.isAdmin) {
+  if (!req.user || !isSuperuser(req.user)) {
     return next(new ApiError(403, "Admin access required"));
   }
 
   next();
+}
+
+export function requireRole(...roles: UserRole[]) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return next(new ApiError(401, "Authentication required"));
+    }
+
+    if (!roles.includes(req.user.role)) {
+      return next(new ApiError(403, "Insufficient role permissions"));
+    }
+
+    next();
+  };
 }

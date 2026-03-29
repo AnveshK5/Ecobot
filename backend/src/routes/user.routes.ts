@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { UserRole } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireAuth } from "../middleware/auth.js";
+import { toSafeUser } from "../utils/auth.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -28,11 +30,8 @@ router.get(
 
     res.json({
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        createdAt: user.createdAt,
-        isAdmin: user.isAdmin
+        ...toSafeUser(user),
+        createdAt: user.createdAt
       },
       preferences: user.preferences,
       badges: user.badges.map((entry) => ({
@@ -60,7 +59,14 @@ router.put(
       }
     });
 
-    res.json({ preferences });
+    res.json({
+      preferences,
+      actor: {
+        id: req.user!.id,
+        role: req.user!.role,
+        isAdmin: req.user!.role === UserRole.SUPERUSER
+      }
+    });
   })
 );
 

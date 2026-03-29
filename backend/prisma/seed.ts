@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { PrismaClient, ActivityType } from "@prisma/client";
+import { PrismaClient, ActivityType, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -27,12 +27,14 @@ async function main() {
     update: {
       name: "Demo User",
       passwordHash,
+      role: UserRole.USER,
       isAdmin: false
     },
     create: {
       name: "Demo User",
       email: "demo@ecobot.app",
       passwordHash,
+      role: UserRole.USER,
       isAdmin: false
     }
   });
@@ -41,12 +43,16 @@ async function main() {
     where: { email: "green@ecobot.app" },
     update: {
       name: "Green Commuter",
-      passwordHash
+      passwordHash,
+      role: UserRole.USER,
+      isAdmin: false
     },
     create: {
       name: "Green Commuter",
       email: "green@ecobot.app",
-      passwordHash
+      passwordHash,
+      role: UserRole.USER,
+      isAdmin: false
     }
   });
 
@@ -89,12 +95,14 @@ async function main() {
     update: {
       name: "Super User",
       passwordHash: await bcrypt.hash("root", 12),
+      role: UserRole.SUPERUSER,
       isAdmin: true
     },
     create: {
       name: "Super User",
       email: "superuser@ai.com",
       passwordHash: await bcrypt.hash("root", 12),
+      role: UserRole.SUPERUSER,
       isAdmin: true,
       preferences: {
         create: {

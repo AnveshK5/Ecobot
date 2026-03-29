@@ -1,13 +1,37 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+import { UserRole } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 export type SafeUser = {
   id: string;
   email: string;
   name: string;
+  role: UserRole;
   isAdmin: boolean;
 };
+
+export function isSuperuser(user: Pick<SafeUser, "role" | "isAdmin">) {
+  return user.role === UserRole.SUPERUSER || user.isAdmin;
+}
+
+export function toSafeUser(user: {
+  id: string;
+  email: string;
+  name: string;
+  role?: UserRole | null;
+  isAdmin: boolean;
+}) {
+  const role = user.role ?? (user.isAdmin ? UserRole.SUPERUSER : UserRole.USER);
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role,
+    isAdmin: role === UserRole.SUPERUSER
+  } satisfies SafeUser;
+}
 
 export async function hashPassword(password: string) {
   return bcrypt.hash(password, 12);
@@ -45,11 +69,8 @@ export async function getUserFromSession(sessionId: string) {
   }
 
   return {
-    id: session.user.id,
-    email: session.user.email,
-    name: session.user.name,
-    isAdmin: session.user.isAdmin
-  } satisfies SafeUser;
+    ...toSafeUser(session.user)
+  };
 }
 
 export async function destroySession(sessionId: string) {

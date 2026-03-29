@@ -87,7 +87,7 @@ export default function AdminPage() {
                 </div>
                 <div className="rounded-xl bg-secondary/40 p-4">
                   <p className="text-xs text-muted-foreground">Role</p>
-                  <p className="mt-1 font-medium">{adminUserDetails.isAdmin ? "Superuser" : "User"}</p>
+                  <p className="mt-1 font-medium">{adminUserDetails.role === "SUPERUSER" ? "Superuser" : "User"}</p>
                 </div>
               </div>
 

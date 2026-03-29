@@ -1,7 +1,8 @@
 import { type Response, Router } from "express";
+import { UserRole } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { comparePassword, createSession, destroySession, hashPassword } from "../utils/auth.js";
+import { comparePassword, createSession, destroySession, hashPassword, toSafeUser } from "../utils/auth.js";
 import { ApiError, asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -44,6 +45,8 @@ router.post(
         name: input.name,
         email: input.email.toLowerCase(),
         passwordHash: await hashPassword(input.password),
+        role: UserRole.USER,
+        isAdmin: false,
         preferences: {
           create: {
             dietType: "balanced",
@@ -55,7 +58,7 @@ router.post(
       }
     });
 
-    const safeUser = { id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin };
+    const safeUser = toSafeUser(user);
     const session = await createSession(safeUser);
     setSessionCookie(res, session.sessionId, session.expiresAt);
 
@@ -78,7 +81,7 @@ router.post(
       throw new ApiError(401, "Invalid email or password");
     }
 
-    const safeUser = { id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin };
+    const safeUser = toSafeUser(user);
     const session = await createSession(safeUser);
     setSessionCookie(res, session.sessionId, session.expiresAt);
 

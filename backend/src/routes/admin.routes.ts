@@ -1,11 +1,13 @@
 import { Router } from "express";
+import { UserRole } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { requireAdmin, requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/http.js";
+import { toSafeUser } from "../utils/auth.js";
 
 const router = Router();
 
-router.use(requireAuth, requireAdmin);
+router.use(requireAuth, requireRole(UserRole.SUPERUSER));
 
 router.get(
   "/users",
@@ -29,7 +31,8 @@ router.get(
         id: user.id,
         name: user.name,
         email: user.email,
-        isAdmin: user.isAdmin,
+        role: user.role,
+        isAdmin: user.role === UserRole.SUPERUSER,
         createdAt: user.createdAt,
         preferences: user.preferences,
         counts: user._count
@@ -61,7 +64,22 @@ router.get(
       }
     });
 
-    res.json({ user });
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isAdmin: user.role === UserRole.SUPERUSER,
+        createdAt: user.createdAt,
+        preferences: user.preferences,
+        activities: user.activities,
+        chatLogs: user.chatLogs,
+        badges: user.badges,
+        weeklyReports: user.weeklyReports
+      },
+      actor: toSafeUser(req.user!)
+    });
   })
 );
 

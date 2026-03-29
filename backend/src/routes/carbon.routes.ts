@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { UserRole } from "@prisma/client";
 import { requireAuth } from "../middleware/auth.js";
 import { getCarbonSummary } from "../services/carbon.service.js";
 import { getLeaderboard, getUserLeaderboardEntry } from "../services/gamification.service.js";
@@ -19,11 +20,17 @@ router.get(
 router.get(
   "/leaderboard",
   asyncHandler(async (req, res) => {
-    const leaderboard = req.user?.isAdmin
+    const leaderboard = req.user?.role === UserRole.SUPERUSER
       ? await getLeaderboard()
       : await getUserLeaderboardEntry(req.user!.id);
 
-    res.json({ leaderboard });
+    res.json({
+      leaderboard,
+      actor: {
+        id: req.user!.id,
+        role: req.user!.role
+      }
+    });
   })
 );
 

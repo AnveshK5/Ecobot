@@ -10,11 +10,13 @@ import { apiRequest } from "@/lib/api";
 
 type ActivityType = "transport" | "food" | "energy" | "shopping";
 type UnitPreference = "metric" | "imperial";
+type UserRole = "USER" | "SUPERUSER";
 
 export interface User {
   user_id: string;
   username: string;
   email: string;
+  role: UserRole;
   is_admin: boolean;
   daily_goal_kgCO2: number;
   created_at: string;
@@ -77,6 +79,7 @@ type AdminUserSummary = {
   id: string;
   name: string;
   email: string;
+  role: UserRole;
   isAdmin: boolean;
   createdAt: string;
   preferences: {
@@ -96,6 +99,7 @@ type AdminUserDetails = {
   id: string;
   name: string;
   email: string;
+  role: UserRole;
   isAdmin: boolean;
   createdAt: string;
   preferences: {
@@ -215,6 +219,7 @@ type BackendProfile = {
     name: string;
     email: string;
     createdAt: string;
+    role: UserRole;
     isAdmin: boolean;
   };
   preferences: BackendPreferences | null;
@@ -228,7 +233,7 @@ type BackendProfile = {
 };
 
 const AppDataContext = createContext<AppDataContextType | null>(null);
-const TASKS_KEY = "ecobot-tasks";
+const TASKS_KEY_PREFIX = "ecobot-tasks";
 
 const quickTaskSeed: Task[] = [
   {
@@ -279,19 +284,28 @@ const activityKeywords = [
 
 const reminderPattern = /remind\s*(me)?\s*(to)?\s+(.+?)(?:\s+at\s+(.+))?$/i;
 
-function loadTasks() {
-  const raw = localStorage.getItem(TASKS_KEY);
-  if (!raw) return quickTaskSeed;
+function getTasksStorageKey(userId: string) {
+  return `${TASKS_KEY_PREFIX}:${userId}`;
+}
+
+function loadTasks(userId?: string | null) {
+  if (!userId) return [];
+
+  const raw = localStorage.getItem(getTasksStorageKey(userId));
+  if (!raw) {
+    return userId === "demo" ? quickTaskSeed : [];
+  }
 
   try {
     return JSON.parse(raw) as Task[];
   } catch {
-    return quickTaskSeed;
+    return userId === "demo" ? quickTaskSeed : [];
   }
 }
 
-function saveTasks(tasks: Task[]) {
-  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+function saveTasks(userId: string | undefined, tasks: Task[]) {
+  if (!userId) return;
+  localStorage.setItem(getTasksStorageKey(userId), JSON.stringify(tasks));
 }
 
 function formatUnit(description: string, type: ActivityType) {
@@ -402,6 +416,7 @@ function mapCurrentUser(profile: BackendProfile): User {
     user_id: profile.user.id,
     username: profile.user.name,
     email: profile.user.email,
+    role: profile.user.role,
     is_admin: profile.user.isAdmin,
     daily_goal_kgCO2: 10,
     created_at: profile.user.createdAt
@@ -413,7 +428,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [userActivities, setUserActivities] = useState<UserActivity[]>([]);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
-  const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [summary, setSummary] = useState<DashboardSummary>({
     daily: 0,
@@ -446,7 +461,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setLeaderboard([]);
     setAdminUsers([]);
     setAdminUserDetails(null);
-    setTasks(loadTasks());
+    setTasks([]);
   }, []);
 
   const bootstrap = useCallback(async () => {
@@ -483,8 +498,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [bootstrap]);
 
   useEffect(() => {
-    saveTasks(tasks);
-  }, [tasks]);
+    setTasks(loadTasks(currentUser?.user_id));
+  }, [currentUser?.user_id]);
+
+  useEffect(() => {
+    saveTasks(currentUser?.user_id, tasks);
+  }, [currentUser?.user_id, tasks]);
 
   const login = useCallback(async (email: string, password: string) => {
     setAuthLoading(true);
