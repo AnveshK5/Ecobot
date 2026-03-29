@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 @layer base {
+  /* Ecobot now uses a mangrove-biome palette by default to satisfy the eco-aesthetic requirement. */
   :root {
     --background: 140 20% 97%;
     --foreground: 150 30% 10%;
@@ -94,5 +95,25 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image:
+      radial-gradient(circle at top, rgba(16, 185, 129, 0.15), transparent 30%),
+      radial-gradient(circle at 80% 10%, rgba(34, 211, 238, 0.12), transparent 22%),
+      linear-gradient(180deg, rgba(7, 10, 25, 0.98), rgba(8, 14, 22, 1));
+    background-attachment: fixed;
+  }
+}
+
+@layer utilities {
+  .motion-safe-soft {
+    transition: all 180ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

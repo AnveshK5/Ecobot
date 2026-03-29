@@ -8,7 +8,17 @@ import { Settings, User, Award, Flame } from 'lucide-react';
 import { convertCarbon } from '@/lib/units';
 
 export default function PreferencesPage() {
-  const { preferences, updatePreferences, currentUser, ecoScore, streak, unitPreference } = useAppData();
+  const {
+    preferences,
+    updatePreferences,
+    currentUser,
+    ecoScore,
+    streak,
+    unitPreference,
+    lowBandwidthMode,
+    setLowBandwidthMode,
+    isOffline
+  } = useAppData();
 
   if (!preferences) return <p className="text-muted-foreground">Loading preferences...</p>;
 
@@ -90,6 +100,22 @@ export default function PreferencesPage() {
                 <SelectItem value="imperial">Imperial (lb, mi)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center justify-between rounded-2xl bg-secondary/35 p-4 lg:col-span-2">
+            <div>
+              <Label>Low-Bandwidth Mode</Label>
+              <p className="text-xs text-muted-foreground">Reduce AI calls and simplify the dashboard for lighter demos.</p>
+            </div>
+            <Switch checked={lowBandwidthMode} onCheckedChange={setLowBandwidthMode} />
+          </div>
+
+          <div className="rounded-2xl bg-secondary/25 p-4 lg:col-span-2">
+            <p className="text-sm font-medium text-foreground">Local-First Architecture</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tasks are stored per user on this device, and the dashboard can fall back to cached data if the network drops.
+              {isOffline ? " You are currently offline." : " You are currently online."}
+            </p>
           </div>
         </CardContent>
       </Card>

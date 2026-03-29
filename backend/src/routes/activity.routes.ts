@@ -14,6 +14,10 @@ const logActivitySchema = z.object({
   description: z.string().max(240).optional()
 });
 
+const batchLogActivitySchema = z.object({
+  entries: z.array(logActivitySchema).min(1).max(25)
+});
+
 router.use(requireAuth);
 
 router.post(
@@ -50,6 +54,60 @@ router.post(
     await awardBadgesForUser(req.user!.id);
 
     res.status(201).json({ userActivity });
+  })
+);
+
+router.post(
+  "/log-batch",
+  asyncHandler(async (req, res) => {
+    const input = batchLogActivitySchema.parse(req.body);
+
+    const activityIds = [...new Set(input.entries.map((entry) => entry.activityId))];
+    const catalog = await prisma.activity.findMany({
+      where: {
+        id: {
+          in: activityIds
+        }
+      }
+    });
+
+    const activityById = new Map(catalog.map((activity) => [activity.id, activity]));
+
+    for (const entry of input.entries) {
+      if (!activityById.has(entry.activityId)) {
+        throw new ApiError(404, "One or more activities were not found");
+      }
+    }
+
+    const created = await prisma.$transaction(
+      input.entries.map((entry) => {
+        const activity = activityById.get(entry.activityId)!;
+        const carbonEmission = Number((activity.carbonValue * entry.quantity).toFixed(2));
+
+        return prisma.userActivity.create({
+          data: {
+            userId: req.user!.id,
+            activityId: activity.id,
+            customInput: {
+              ...entry.customInput,
+              quantity: entry.quantity,
+              description: entry.description ?? activity.description
+            },
+            carbonEmission
+          },
+          include: {
+            activity: true
+          }
+        });
+      })
+    );
+
+    await awardBadgesForUser(req.user!.id);
+
+    res.status(201).json({
+      count: created.length,
+      userActivities: created
+    });
   })
 );
 

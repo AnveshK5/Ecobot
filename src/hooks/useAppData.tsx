@@ -7,10 +7,41 @@ import {
   type ReactNode
 } from "react";
 import { apiRequest } from "@/lib/api";
+import { formatCarbon, formatDistance } from "@/lib/units";
 
 type ActivityType = "transport" | "food" | "energy" | "shopping";
 type UnitPreference = "metric" | "imperial";
 type UserRole = "USER" | "SUPERUSER";
+type BootstrapPayload = {
+  activities: BackendActivity[];
+  profile: BackendProfile;
+  history: BackendUserActivity[];
+  carbon: DashboardSummary;
+  chats: BackendChat[];
+  suggestions: string[];
+  leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }>;
+};
+type UiSettings = {
+  lowBandwidthMode: boolean;
+};
+type BillingSnapshot = {
+  hasSubscription: boolean;
+  isTrialActive: boolean;
+  trialStartsAt: string;
+  trialEndsAt: string;
+  subscription: {
+    planMonths: number;
+    priceUsd: number;
+    status: "TRIAL" | "ACTIVE" | "EXPIRED" | "CANCELED";
+    currentPeriodStart: string;
+    currentPeriodEnd: string;
+  } | null;
+};
+type ExtractedActivityEntry = {
+  activity: Activity;
+  quantity: number;
+  notes: string;
+};
 
 export interface User {
   user_id: string;
@@ -150,9 +181,15 @@ interface AppDataContextType {
   chatLog: ChatMessage[];
   tasks: Task[];
   preferences: Preferences | null;
+  billing: BillingSnapshot | null;
   loading: boolean;
   authLoading: boolean;
   authError: string | null;
+  upgradePromptOpen: boolean;
+  lowBandwidthMode: boolean;
+  setLowBandwidthMode: (enabled: boolean) => void;
+  dismissUpgradePrompt: () => void;
+  isOffline: boolean;
   unitPreference: UnitPreference;
   adminUsers: AdminUserSummary[];
   adminUserDetails: AdminUserDetails | null;
@@ -166,6 +203,7 @@ interface AppDataContextType {
   addChatMessage: (message: string, sender: "user" | "AI") => void;
   sendChatMessage: (message: string) => Promise<void>;
   updatePreferences: (updates: Partial<Preferences>) => Promise<void>;
+  subscribeToPlan: (planMonths: 1 | 3 | 6 | 12) => Promise<void>;
   addTask: (title: string, time: string) => void;
   toggleTask: (taskId: string) => void;
   deleteTask: (taskId: string) => void;
@@ -223,6 +261,7 @@ type BackendProfile = {
     isAdmin: boolean;
   };
   preferences: BackendPreferences | null;
+  billing: BillingSnapshot;
   badges: Array<{
     id: string;
     key: string;
@@ -234,6 +273,8 @@ type BackendProfile = {
 
 const AppDataContext = createContext<AppDataContextType | null>(null);
 const TASKS_KEY_PREFIX = "ecobot-tasks";
+const CACHE_KEY_PREFIX = "ecobot-cache";
+const UI_SETTINGS_KEY = "ecobot-ui-settings";
 
 const quickTaskSeed: Task[] = [
   {
@@ -288,6 +329,27 @@ function getTasksStorageKey(userId: string) {
   return `${TASKS_KEY_PREFIX}:${userId}`;
 }
 
+function getCacheStorageKey(userId: string) {
+  return `${CACHE_KEY_PREFIX}:${userId}`;
+}
+
+function loadUiSettings(): UiSettings {
+  const raw = localStorage.getItem(UI_SETTINGS_KEY);
+  if (!raw) {
+    return { lowBandwidthMode: false };
+  }
+
+  try {
+    return JSON.parse(raw) as UiSettings;
+  } catch {
+    return { lowBandwidthMode: false };
+  }
+}
+
+function saveUiSettings(settings: UiSettings) {
+  localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify(settings));
+}
+
 function loadTasks(userId?: string | null) {
   if (!userId) return [];
 
@@ -306,6 +368,25 @@ function loadTasks(userId?: string | null) {
 function saveTasks(userId: string | undefined, tasks: Task[]) {
   if (!userId) return;
   localStorage.setItem(getTasksStorageKey(userId), JSON.stringify(tasks));
+}
+
+function pruneTasks(tasks: Task[]) {
+  const now = Date.now();
+
+  return tasks.filter((task) => {
+    const taskTime = new Date(task.time).getTime();
+    const createdAt = new Date(task.created_at).getTime();
+
+    if (task.completed && now - createdAt > 1000 * 60 * 60 * 24 * 7) {
+      return false;
+    }
+
+    if (!task.completed && now - taskTime > 1000 * 60 * 60 * 24 * 14) {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 function formatUnit(description: string, type: ActivityType) {
@@ -407,6 +488,292 @@ function inferActivity(message: string, activities: Activity[]) {
   return null;
 }
 
+function splitNarrative(message: string) {
+  return message
+    .split(/[\n.!?]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function findCatalogActivity(
+  activities: Activity[],
+  type: ActivityType,
+  includes: string[]
+) {
+  return activities.find(
+    (activity) =>
+      activity.category === categoryMap[type] &&
+      includes.some((token) => activity.name.toLowerCase().includes(token.toLowerCase()))
+  );
+}
+
+function parseDistanceInMiles(text: string) {
+  const matches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(km|kilometers?|mi|mile|miles)\b/gi)];
+  if (!matches.length) return 0;
+
+  return matches.reduce((sum, match) => {
+    const value = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    return sum + (unit.startsWith("k") ? value / 1.60934 : value);
+  }, 0);
+}
+
+function parseHours(text: string) {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(hours?|hrs?)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function parseMinutes(text: string) {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(minutes?|mins?)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function inferActivitiesBatch(message: string, activities: Activity[]) {
+  const sentences = splitNarrative(message);
+  const extracted: ExtractedActivityEntry[] = [];
+
+  const drivingActivity = findCatalogActivity(activities, "transport", ["driving"]);
+  const cyclingActivity = findCatalogActivity(activities, "transport", ["cycling"]);
+  const electricityActivity = findCatalogActivity(activities, "energy", ["electricity"]);
+  const naturalGasActivity = findCatalogActivity(activities, "energy", ["natural gas"]);
+  const vegetarianMealActivity = findCatalogActivity(activities, "food", ["vegetarian"]);
+  const chickenMealActivity = findCatalogActivity(activities, "food", ["chicken"]);
+  const shoppingActivity = findCatalogActivity(activities, "shopping", ["online shopping"]);
+
+  for (const sentence of sentences) {
+    const lower = sentence.toLowerCase();
+
+    if (drivingActivity && /(drive|drove|driving|petrol car|gasoline car|car)/i.test(sentence)) {
+      const distance = parseDistanceInMiles(sentence);
+      if (distance > 0) {
+        extracted.push({
+          activity: drivingActivity,
+          quantity: Number(distance.toFixed(2)),
+          notes: sentence
+        });
+      }
+    }
+
+    if (cyclingActivity && /\bbike|biked|cycling|cycled\b/i.test(sentence) && !/motorbike/i.test(sentence)) {
+      const distance = parseDistanceInMiles(sentence);
+      extracted.push({
+        activity: cyclingActivity,
+        quantity: Number((distance || 1).toFixed(2)),
+        notes: sentence
+      });
+    }
+
+    if (naturalGasActivity && /hot water|shower/i.test(sentence)) {
+      const minutes = parseMinutes(sentence);
+      if (minutes > 0) {
+        extracted.push({
+          activity: naturalGasActivity,
+          quantity: Number((minutes * 0.012).toFixed(2)),
+          notes: `${sentence} (estimated hot water usage)`
+        });
+      }
+    }
+
+    if (electricityActivity) {
+      const hours = parseHours(sentence);
+      let estimatedKwh = 0;
+
+      if (hours > 0) {
+        if (/light|lights/i.test(sentence)) estimatedKwh += 0.12 * hours;
+        if (/fan/i.test(sentence)) estimatedKwh += 0.075 * hours;
+        if (/\bac\b|air conditioner/i.test(sentence)) estimatedKwh += 1.5 * hours;
+        if (/laptop/i.test(sentence)) estimatedKwh += 0.06 * hours;
+        if (/phone/i.test(sentence)) estimatedKwh += 0.015 * hours;
+      }
+
+      if (estimatedKwh > 0) {
+        extracted.push({
+          activity: electricityActivity,
+          quantity: Number(estimatedKwh.toFixed(2)),
+          notes: `${sentence} (estimated electricity usage)`
+        });
+      }
+    }
+
+    if (vegetarianMealActivity && /(breakfast|eggs|toast|coffee)/i.test(sentence) && !/(chicken|beef|non-veg)/i.test(sentence)) {
+      extracted.push({
+        activity: vegetarianMealActivity,
+        quantity: 1,
+        notes: sentence
+      });
+    }
+
+    if (chickenMealActivity && /(chicken|biryani|non-veg|non veg)/i.test(sentence)) {
+      extracted.push({
+        activity: chickenMealActivity,
+        quantity: 1,
+        notes: sentence
+      });
+    }
+
+    if (shoppingActivity && /(ordered online|online|plastic packaging|plastic bottle)/i.test(sentence)) {
+      extracted.push({
+        activity: shoppingActivity,
+        quantity: 1,
+        notes: sentence
+      });
+    }
+  }
+
+  return extracted;
+}
+
+function summarizeBatchEntries(entries: ExtractedActivityEntry[]) {
+  const counts = entries.reduce<Record<string, number>>((acc, entry) => {
+    acc[entry.activity.name] = (acc[entry.activity.name] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([name, count]) => `${name}${count > 1 ? ` x${count}` : ""}`)
+    .join(", ");
+}
+
+function getTimeframeStart(message: string) {
+  const lower = message.toLowerCase();
+  const now = new Date();
+
+  if (/\btoday\b|\bdaily\b/.test(lower)) {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  if (/\bthis week\b|\bweekly\b/.test(lower)) {
+    const day = now.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    const start = new Date(now);
+    start.setDate(now.getDate() - diff);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  if (/\bthis month\b|\bmonthly\b/.test(lower)) {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  if (/\bthis year\b|\byearly\b|\bannual\b/.test(lower)) {
+    return new Date(now.getFullYear(), 0, 1);
+  }
+
+  return null;
+}
+
+function getCategoryFromMessage(message: string) {
+  const lower = message.toLowerCase();
+
+  if (/(travel|transport|car|bus|bike|walk|flight|distance)/.test(lower)) return "Travel";
+  if (/(food|diet|meal|beef|chicken|vegetarian|non-veg|non veg)/.test(lower)) return "Food";
+  if (/(energy|electricity|power|ac|fan|laptop|phone|lights)/.test(lower)) return "Energy";
+  if (/(shopping|purchase|order|plastic|packaging|bottle)/.test(lower)) return "Shopping";
+
+  return null;
+}
+
+function buildStatsAwareResponse(params: {
+  message: string;
+  userActivities: UserActivity[];
+  activities: Activity[];
+  ecoScore: number;
+  totalCO2Today: number;
+  totalCO2All: number;
+  unitPreference: UnitPreference;
+}) {
+  const { message, userActivities, activities, ecoScore, totalCO2Today, totalCO2All, unitPreference } = params;
+  const lower = message.toLowerCase();
+
+  const isStatsQuestion = /(score|distance|travel|footprint|carbon|co2|emission|summary|report|how much|how many|overall|total)/.test(lower);
+  if (!isStatsQuestion) {
+    return null;
+  }
+
+  const timeframeStart = getTimeframeStart(message);
+  const scopedActivities = timeframeStart
+    ? userActivities.filter((entry) => new Date(entry.timestamp) >= timeframeStart)
+    : userActivities;
+  const category = getCategoryFromMessage(message);
+  const activitiesById = new Map(activities.map((activity) => [activity.activity_id, activity]));
+  const filteredActivities = category
+    ? scopedActivities.filter((entry) => activitiesById.get(entry.activity_id)?.category === category)
+    : scopedActivities;
+
+  const emissionTotal = filteredActivities.reduce((sum, entry) => sum + entry.co2_emission, 0);
+  const travelDistanceMiles = filteredActivities
+    .filter((entry) => activitiesById.get(entry.activity_id)?.category === "Travel")
+    .reduce((sum, entry) => sum + entry.quantity, 0);
+  const entryCount = filteredActivities.length;
+  const scopeLabel = timeframeStart
+    ? /\btoday\b|\bdaily\b/.test(lower)
+      ? "today"
+      : /\bthis week\b|\bweekly\b/.test(lower)
+        ? "this week"
+        : /\bthis month\b|\bmonthly\b/.test(lower)
+          ? "this month"
+          : "this year"
+    : "overall";
+
+  if (/(eco score|carbon score|overall score|my score)/.test(lower)) {
+    return `Your current eco score is ${ecoScore}/100. ${ecoScore >= 85 ? "You are in a strong low-carbon zone." : ecoScore >= 65 ? "You are doing fairly well, with room to improve your biggest category." : "Your biggest opportunity is to reduce the highest-emission category in your recent activity."}`;
+  }
+
+  if (/(distance|travel|how far)/.test(lower)) {
+    return `You have traveled ${formatDistance(travelDistanceMiles, unitPreference)} ${scopeLabel === "overall" ? "in total across your logged history" : scopeLabel}. ${travelDistanceMiles > 0 ? `The related footprint for those travel entries is ${formatCarbon(filteredActivities.filter((entry) => activitiesById.get(entry.activity_id)?.category === "Travel").reduce((sum, entry) => sum + entry.co2_emission, 0), unitPreference)}.` : "I do not see any travel logs in that time window yet."}`;
+  }
+
+  if (category) {
+    return `${category} emissions ${scopeLabel === "overall" ? "across your full history" : scopeLabel} are ${formatCarbon(emissionTotal, unitPreference)} from ${entryCount} logged activit${entryCount === 1 ? "y" : "ies"}.`;
+  }
+
+  if (/\btoday\b/.test(lower)) {
+    return `Today you have logged ${formatCarbon(totalCO2Today, unitPreference)} across ${filteredActivities.length} activit${filteredActivities.length === 1 ? "y" : "ies"}. Your travel distance today is ${formatDistance(travelDistanceMiles, unitPreference)}.`;
+  }
+
+  if (/\boverall\b|\btotal\b/.test(lower) || /(footprint|carbon|co2|emission)/.test(lower)) {
+    return `Your ${scopeLabel === "overall" ? "overall" : scopeLabel} footprint is ${formatCarbon(scopeLabel === "overall" ? totalCO2All : emissionTotal, unitPreference)} from ${filteredActivities.length} logged activit${filteredActivities.length === 1 ? "y" : "ies"}.`;
+  }
+
+  return null;
+}
+
+function buildImprovementSuggestions(entries: ExtractedActivityEntry[]) {
+  const suggestions: string[] = [];
+
+  const hasDriving = entries.some((entry) => entry.activity.name.toLowerCase().includes("driving"));
+  const hasChicken = entries.some((entry) => entry.activity.name.toLowerCase().includes("chicken"));
+  const hasShopping = entries.some((entry) => entry.activity.category === "Shopping");
+  const electricityEntry = entries.find((entry) => entry.activity.name.toLowerCase().includes("electricity"));
+  const hotWaterEntry = entries.find((entry) => entry.activity.name.toLowerCase().includes("natural gas"));
+
+  if (hasDriving) {
+    suggestions.push("Swap one car trip for bus, cycling, or walking to cut your transport emissions first.");
+  }
+
+  if (electricityEntry) {
+    suggestions.push("Reduce AC runtime or raise the temperature setting slightly to bring down your daily electricity footprint.");
+  }
+
+  if (hotWaterEntry) {
+    suggestions.push("Shorter hot showers can lower both water-heating energy use and total daily emissions.");
+  }
+
+  if (hasChicken) {
+    suggestions.push("Replacing one non-veg meal with a vegetarian option is an easy way to lower food emissions.");
+  }
+
+  if (hasShopping) {
+    suggestions.push("Try reusable containers or fewer packaged orders to reduce shopping and delivery-related impact.");
+  }
+
+  if (!suggestions.length) {
+    suggestions.push("Keep logging consistently so Ecobot can spot the highest-impact habit to improve next.");
+  }
+
+  return suggestions.slice(0, 3);
+}
+
 function dayLabel(dateString: string) {
   return new Date(dateString).toLocaleDateString("en-US", { weekday: "short" });
 }
@@ -430,6 +797,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [preferences, setPreferences] = useState<Preferences | null>(null);
+  const [billing, setBilling] = useState<BillingSnapshot | null>(null);
   const [summary, setSummary] = useState<DashboardSummary>({
     daily: 0,
     weekly: 0,
@@ -441,9 +809,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [upgradePromptOpen, setUpgradePromptOpen] = useState(false);
+  const [lowBandwidthMode, setLowBandwidthModeState] = useState<boolean>(() => loadUiSettings().lowBandwidthMode);
+  const [isOffline, setIsOffline] = useState<boolean>(() => !navigator.onLine);
   const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
   const [adminUserDetails, setAdminUserDetails] = useState<AdminUserDetails | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
+
+  const hydrateState = useCallback((payload: BootstrapPayload) => {
+    setActivities(payload.activities.map(mapActivity));
+    setCurrentUser(mapCurrentUser(payload.profile));
+    setPreferences(mapPreferences(payload.profile.preferences, payload.profile.user.id));
+    setBilling(payload.profile.billing);
+    setUserActivities(payload.history.map(mapUserActivity));
+    setSummary(payload.carbon);
+    setChatLog(mapChats(payload.chats));
+    setAiSuggestions(payload.suggestions);
+    setLeaderboard(payload.leaderboard);
+    setAuthError(null);
+  }, []);
 
   const resetAppState = useCallback(() => {
     setCurrentUser(null);
@@ -451,6 +835,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setUserActivities([]);
     setChatLog([]);
     setPreferences(null);
+    setBilling(null);
     setSummary({
       daily: 0,
       weekly: 0,
@@ -462,6 +847,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setAdminUsers([]);
     setAdminUserDetails(null);
     setTasks([]);
+    setUpgradePromptOpen(false);
   }, []);
 
   const bootstrap = useCallback(async () => {
@@ -473,37 +859,84 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         apiRequest<{ history: BackendUserActivity[] }>("/activity/history"),
         apiRequest<DashboardSummary>("/carbon/summary"),
         apiRequest<{ chats: BackendChat[] }>("/ai/history"),
-        apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
+        lowBandwidthMode
+          ? Promise.resolve<{ suggestions: string[] }>({
+              suggestions: [
+                "Low-bandwidth mode is on. Open AI Chat only when you want a focused suggestion."
+              ]
+            })
+          : apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
         apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard")
       ]);
 
-      setActivities(catalog.activities.map(mapActivity));
-      setCurrentUser(mapCurrentUser(profile));
-      setPreferences(mapPreferences(profile.preferences, profile.user.id));
-      setUserActivities(history.history.map(mapUserActivity));
-      setSummary(carbon);
-      setChatLog(mapChats(chats.chats));
-      setAiSuggestions(suggestions.suggestions);
-      setLeaderboard(board.leaderboard);
-      setAuthError(null);
+      const payload: BootstrapPayload = {
+        activities: catalog.activities,
+        profile,
+        history: history.history,
+        carbon,
+        chats: chats.chats,
+        suggestions: suggestions.suggestions,
+        leaderboard: board.leaderboard
+      };
+
+      hydrateState(payload);
+      localStorage.setItem(getCacheStorageKey(profile.user.id), JSON.stringify(payload));
     } catch {
-      resetAppState();
+      const cachedUserId = currentUser?.user_id;
+      const rawCache = cachedUserId ? localStorage.getItem(getCacheStorageKey(cachedUserId)) : null;
+
+      if (rawCache) {
+        try {
+          hydrateState(JSON.parse(rawCache) as BootstrapPayload);
+          setAuthError("Using locally cached data.");
+          return;
+        } catch {
+          resetAppState();
+        }
+      } else {
+        resetAppState();
+      }
     } finally {
       setLoading(false);
     }
-  }, [resetAppState]);
+  }, [currentUser?.user_id, hydrateState, lowBandwidthMode, resetAppState]);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
   useEffect(() => {
-    setTasks(loadTasks(currentUser?.user_id));
+    const syncNetworkStatus = () => setIsOffline(!navigator.onLine);
+
+    window.addEventListener("online", syncNetworkStatus);
+    window.addEventListener("offline", syncNetworkStatus);
+
+    return () => {
+      window.removeEventListener("online", syncNetworkStatus);
+      window.removeEventListener("offline", syncNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    setTasks(pruneTasks(loadTasks(currentUser?.user_id)));
   }, [currentUser?.user_id]);
 
   useEffect(() => {
-    saveTasks(currentUser?.user_id, tasks);
+    saveTasks(currentUser?.user_id, pruneTasks(tasks));
   }, [currentUser?.user_id, tasks]);
+
+  useEffect(() => {
+    saveUiSettings({ lowBandwidthMode });
+  }, [lowBandwidthMode]);
+
+  useEffect(() => {
+    if (currentUser && billing && !billing.hasSubscription) {
+      setUpgradePromptOpen(true);
+      return;
+    }
+
+    setUpgradePromptOpen(false);
+  }, [billing, currentUser]);
 
   const login = useCallback(async (email: string, password: string) => {
     setAuthLoading(true);
@@ -552,7 +985,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       apiRequest<{ history: BackendUserActivity[] }>("/activity/history"),
       apiRequest<DashboardSummary>("/carbon/summary"),
       apiRequest<BackendProfile>("/user/profile"),
-      apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
+      lowBandwidthMode
+        ? Promise.resolve<{ suggestions: string[] }>({
+            suggestions: [
+              "Low-bandwidth mode is on. Open AI Chat when you want a single focused suggestion."
+            ]
+          })
+        : apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
       apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard")
     ]);
 
@@ -571,7 +1010,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
     setAiSuggestions(suggestions.suggestions);
     setLeaderboard(board.leaderboard);
-  }, []);
+  }, [lowBandwidthMode]);
 
   const loadAdminUsers = useCallback(async () => {
     setAdminLoading(true);
@@ -591,141 +1030,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setAdminLoading(false);
     }
-  }, []);
-
-  const addChatMessage = useCallback((message: string, sender: "user" | "AI") => {
-    setChatLog((prev) => [
-      ...prev,
-      {
-        chat_id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        user_id: currentUser?.user_id || "demo",
-        message,
-        sender,
-        timestamp: new Date().toISOString()
-      }
-    ]);
-  }, [currentUser?.user_id]);
-
-  const addUserActivity = useCallback(async (activityId: string, quantity: number, notes: string) => {
-    await apiRequest("/activity/log", {
-      method: "POST",
-      body: {
-        activityId,
-        quantity,
-        customInput: {
-          quantity,
-          description: notes || "Logged from EcoBot frontend"
-        }
-      }
-    });
-
-    await refreshActivityState();
-  }, [refreshActivityState]);
-
-  const addTask = useCallback((title: string, time: string) => {
-    setTasks((prev) => [
-      ...prev,
-      {
-        task_id: `task-${Date.now()}`,
-        user_id: currentUser?.user_id || "demo",
-        title,
-        time,
-        completed: false,
-        created_at: new Date().toISOString()
-      }
-    ]);
-  }, [currentUser?.user_id]);
-
-  const sendChatMessage = useCallback(async (message: string) => {
-    if (!currentUser) return;
-
-    addChatMessage(message, "user");
-
-    try {
-      const reminderMatch = message.match(reminderPattern);
-      if (reminderMatch) {
-        const title = reminderMatch[3].trim();
-        const taskTime = reminderMatch[4]?.trim();
-        const date = new Date();
-
-        if (taskTime) {
-          const match = taskTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
-          if (match) {
-            let hours = Number(match[1]);
-            const minutes = Number(match[2] || 0);
-            const suffix = match[3].toLowerCase();
-            if (suffix === "pm" && hours < 12) hours += 12;
-            if (suffix === "am" && hours === 12) hours = 0;
-            date.setHours(hours, minutes, 0, 0);
-          }
-        }
-
-        addTask(title, date.toISOString());
-        addChatMessage(`Reminder set for "${title}".`, "AI");
-        return;
-      }
-
-      const activityMatch = inferActivity(message, activities);
-      if (activityMatch) {
-        await addUserActivity(activityMatch.activity.activity_id, activityMatch.quantity, message);
-        addChatMessage(
-          `${activityMatch.activity.name} logged successfully.`,
-          "AI"
-        );
-        return;
-      }
-
-      const response = await apiRequest<{ response: string }>("/ai/chat", {
-        method: "POST",
-        body: { message }
-      });
-
-      addChatMessage(response.response, "AI");
-    } catch (error) {
-      const messageText =
-        error instanceof Error && error.message
-          ? error.message
-          : "I hit a temporary connection issue.";
-      addChatMessage(
-        `${messageText} Please try again in a moment.`,
-        "AI"
-      );
-    }
-  }, [activities, addChatMessage, addTask, addUserActivity, currentUser]);
-
-  const updatePreferences = useCallback(async (updates: Partial<Preferences>) => {
-    if (!currentUser) return;
-
-    await apiRequest<{ preferences: BackendPreferences }>("/user/preferences", {
-      method: "PUT",
-      body: {
-        dietType: updates.diet_type ?? preferences?.diet_type,
-        transportMode: updates.transport_mode ?? preferences?.transport_mode,
-        energyUsageType: updates.energy_usage_type ?? preferences?.energy_usage_type,
-        units: updates.units ?? preferences?.units
-      }
-    });
-
-    setPreferences((prev) =>
-      prev
-        ? {
-            ...prev,
-            ...updates
-          }
-        : null
-    );
-  }, [currentUser, preferences]);
-
-  const toggleTask = useCallback((taskId: string) => {
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.task_id === taskId ? { ...task, completed: !task.completed } : task
-      )
-    );
-  }, []);
-
-  const deleteTask = useCallback((taskId: string) => {
-    setTasks((prev) => prev.filter((task) => task.task_id !== taskId));
   }, []);
 
   const totalCO2Today = summary.daily;
@@ -771,6 +1075,225 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         : totalCO2Today <= 10
           ? "Nice work. You are under your daily goal today."
           : "You are above your daily goal today. Check the AI suggestions for the easiest category to improve next.";
+  const unitPreference = preferences?.units ?? "metric";
+
+  const addChatMessage = useCallback((message: string, sender: "user" | "AI") => {
+    setChatLog((prev) => [
+      ...prev,
+      {
+        chat_id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        user_id: currentUser?.user_id || "demo",
+        message,
+        sender,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+  }, [currentUser?.user_id]);
+
+  const addUserActivity = useCallback(async (activityId: string, quantity: number, notes: string) => {
+    await apiRequest("/activity/log", {
+      method: "POST",
+      body: {
+        activityId,
+        quantity,
+        customInput: {
+          quantity,
+          description: notes || "Logged from EcoBot frontend"
+        }
+      }
+    });
+
+    await refreshActivityState();
+  }, [refreshActivityState]);
+
+  const addUserActivitiesBatch = useCallback(async (entries: ExtractedActivityEntry[]) => {
+    if (!entries.length) return;
+
+    await apiRequest("/activity/log-batch", {
+      method: "POST",
+      body: {
+        entries: entries.map((entry) => ({
+          activityId: entry.activity.activity_id,
+          quantity: entry.quantity,
+          description: entry.notes,
+          customInput: {
+            quantity: entry.quantity,
+            description: entry.notes,
+            source: "ai-chat-batch"
+          }
+        }))
+      }
+    });
+
+    await refreshActivityState();
+  }, [refreshActivityState]);
+
+  const addTask = useCallback((title: string, time: string) => {
+    setTasks((prev) =>
+      pruneTasks([
+        ...prev,
+        {
+          task_id: `task-${Date.now()}`,
+          user_id: currentUser?.user_id || "demo",
+          title,
+          time,
+          completed: false,
+          created_at: new Date().toISOString()
+        }
+      ])
+    );
+  }, [currentUser?.user_id]);
+
+  const sendChatMessage = useCallback(async (message: string) => {
+    if (!currentUser) return;
+
+    addChatMessage(message, "user");
+
+    try {
+      const reminderMatch = message.match(reminderPattern);
+      if (reminderMatch) {
+        const title = reminderMatch[3].trim();
+        const taskTime = reminderMatch[4]?.trim();
+        const date = new Date();
+
+        if (taskTime) {
+          const match = taskTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+          if (match) {
+            let hours = Number(match[1]);
+            const minutes = Number(match[2] || 0);
+            const suffix = match[3].toLowerCase();
+            if (suffix === "pm" && hours < 12) hours += 12;
+            if (suffix === "am" && hours === 12) hours = 0;
+            date.setHours(hours, minutes, 0, 0);
+          }
+        }
+
+        addTask(title, date.toISOString());
+        addChatMessage(`Reminder set for "${title}".`, "AI");
+        return;
+      }
+
+      const statsResponse = buildStatsAwareResponse({
+        message,
+        userActivities,
+        activities,
+        ecoScore,
+        totalCO2Today,
+        totalCO2All,
+        unitPreference
+      });
+      if (statsResponse) {
+        addChatMessage(statsResponse, "AI");
+        return;
+      }
+
+      const activityBatch = inferActivitiesBatch(message, activities);
+      if (activityBatch.length >= 2) {
+        await addUserActivitiesBatch(activityBatch);
+
+        const totalEmission = activityBatch.reduce(
+          (sum, entry) => sum + entry.quantity * entry.activity.emission_factor,
+          0
+        );
+        const summaryText = summarizeBatchEntries(activityBatch);
+        const suggestions = buildImprovementSuggestions(activityBatch);
+
+        addChatMessage(
+          `I turned your day summary into ${activityBatch.length} activity logs. I captured: ${summaryText}. The estimated total added footprint is ${totalEmission.toFixed(2)} kg CO2.\n\nTo improve this pattern, start here:\n• ${suggestions.join('\n• ')}`,
+          "AI"
+        );
+        return;
+      }
+
+      const activityMatch = inferActivity(message, activities);
+      if (activityMatch) {
+        await addUserActivity(activityMatch.activity.activity_id, activityMatch.quantity, message);
+        const suggestions = buildImprovementSuggestions([
+          {
+            activity: activityMatch.activity,
+            quantity: activityMatch.quantity,
+            notes: message
+          }
+        ]);
+        addChatMessage(
+          `I logged "${activityMatch.activity.name}" for you.\n\nA good next improvement would be:\n• ${suggestions.join('\n• ')}`,
+          "AI"
+        );
+        return;
+      }
+
+      const response = await apiRequest<{ response: string }>("/ai/chat", {
+        method: "POST",
+        body: { message }
+      });
+
+      addChatMessage(response.response, "AI");
+    } catch (error) {
+      const messageText =
+        error instanceof Error && error.message
+          ? error.message
+          : "I hit a temporary connection issue.";
+      addChatMessage(
+        `${messageText} Please try again in a moment.`,
+        "AI"
+      );
+    }
+  }, [activities, addChatMessage, addTask, addUserActivitiesBatch, addUserActivity, currentUser, ecoScore, totalCO2All, totalCO2Today, unitPreference, userActivities]);
+
+  const setLowBandwidthMode = useCallback((enabled: boolean) => {
+    setLowBandwidthModeState(enabled);
+  }, []);
+
+  const dismissUpgradePrompt = useCallback(() => {
+    setUpgradePromptOpen(false);
+  }, []);
+
+  const updatePreferences = useCallback(async (updates: Partial<Preferences>) => {
+    if (!currentUser) return;
+
+    await apiRequest<{ preferences: BackendPreferences }>("/user/preferences", {
+      method: "PUT",
+      body: {
+        dietType: updates.diet_type ?? preferences?.diet_type,
+        transportMode: updates.transport_mode ?? preferences?.transport_mode,
+        energyUsageType: updates.energy_usage_type ?? preferences?.energy_usage_type,
+        units: updates.units ?? preferences?.units
+      }
+    });
+
+    setPreferences((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updates
+          }
+        : null
+    );
+  }, [currentUser, preferences]);
+
+  const subscribeToPlan = useCallback(async (planMonths: 1 | 3 | 6 | 12) => {
+    const response = await apiRequest<{ billing: BillingSnapshot }>("/user/subscription", {
+      method: "POST",
+      body: {
+        planMonths: String(planMonths)
+      }
+    });
+
+    setBilling(response.billing);
+    setUpgradePromptOpen(false);
+  }, []);
+
+  const toggleTask = useCallback((taskId: string) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.task_id === taskId ? { ...task, completed: !task.completed } : task
+      )
+    );
+  }, []);
+
+  const deleteTask = useCallback((taskId: string) => {
+    setTasks((prev) => prev.filter((task) => task.task_id !== taskId));
+  }, []);
 
   const value: AppDataContextType = {
     isAuthenticated: Boolean(currentUser),
@@ -780,10 +1303,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     chatLog,
     tasks,
     preferences,
+    billing,
     loading,
     authLoading,
     authError,
-    unitPreference: preferences?.units ?? "metric",
+    upgradePromptOpen,
+    lowBandwidthMode,
+    setLowBandwidthMode,
+    dismissUpgradePrompt,
+    isOffline,
+    unitPreference,
     adminUsers,
     adminUserDetails,
     adminLoading,
@@ -796,6 +1325,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     addChatMessage,
     sendChatMessage,
     updatePreferences,
+    subscribeToPlan,
     addTask,
     toggleTask,
     deleteTask,

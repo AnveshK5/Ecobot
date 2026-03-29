@@ -1,4 +1,4 @@
-import { BarChart3, PlusCircle, MessageSquare, Settings, History, ListTodo, Menu, Shield, X } from 'lucide-react';
+import { BarChart3, PlusCircle, MessageSquare, Settings, History, ListTodo, Menu, Shield, Sparkles, X } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -11,6 +11,7 @@ const baseLinks = [
   { to: '/tasks', icon: ListTodo, label: 'Tasks' },
   { to: '/history', icon: History, label: 'History' },
   { to: '/chat', icon: MessageSquare, label: 'AI Chat' },
+  { to: '/upgrade', icon: Sparkles, label: 'Upgrade' },
   { to: '/preferences', icon: Settings, label: 'Preferences' },
 ];
 

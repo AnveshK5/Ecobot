@@ -14,6 +14,7 @@ import ChatPage from "./pages/ChatPage";
 import TasksPage from "./pages/TasksPage";
 import PreferencesPage from "./pages/PreferencesPage";
 import AdminPage from "./pages/AdminPage";
+import UpgradePage from "./pages/UpgradePage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import NotFound from "./pages/NotFound";
@@ -82,6 +83,14 @@ const App = () => (
                 element={
                   <AppLayout>
                     <ChatPage />
+                  </AppLayout>
+                }
+              />
+              <Route
+                path="/upgrade"
+                element={
+                  <AppLayout>
+                    <UpgradePage />
                   </AppLayout>
                 }
               />
