@@ -1,9 +1,11 @@
-import { Leaf, BarChart3, PlusCircle, MessageSquare, Settings, History, ListTodo, Menu, X } from 'lucide-react';
+import { BarChart3, PlusCircle, MessageSquare, Settings, History, ListTodo, Menu, Shield, X } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { useAppData } from '@/hooks/useAppData';
 
-const links = [
+const baseLinks = [
   { to: '/', icon: BarChart3, label: 'Dashboard' },
   { to: '/add', icon: PlusCircle, label: 'Add Activity' },
   { to: '/tasks', icon: ListTodo, label: 'Tasks' },
@@ -14,14 +16,20 @@ const links = [
 
 export default function AppSidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { currentUser, logout } = useAppData();
+  const links = currentUser?.is_admin
+    ? [...baseLinks, { to: '/admin', icon: Shield, label: 'Admin' }]
+    : baseLinks;
 
   return (
     <>
       {/* Mobile Header */}
       <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between border-b border-border bg-card px-4 py-3 md:hidden">
         <div className="flex items-center gap-2">
-          <Leaf className="h-6 w-6 text-primary" />
-          <span className="text-lg font-bold tracking-tight">EcoMind</span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+            EC
+          </div>
+          <span className="text-lg font-bold tracking-tight">Ecobot</span>
         </div>
         <button onClick={() => setMobileOpen(!mobileOpen)} className="p-1.5 rounded-lg hover:bg-secondary">
           {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -40,12 +48,12 @@ export default function AppSidebar() {
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       )}>
         <div className="flex items-center gap-2.5 border-b border-border px-6 py-5">
-          <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Leaf className="h-5 w-5 text-primary" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+            EC
           </div>
           <div>
-            <span className="text-lg font-bold tracking-tight">EcoMind</span>
-            <p className="text-[10px] text-muted-foreground -mt-0.5">AI Carbon Tracker</p>
+            <span className="text-lg font-bold tracking-tight">Ecobot</span>
+            <p className="text-[10px] text-muted-foreground -mt-0.5">AI Powered Personal Assistant and Carbon Tracker</p>
           </div>
         </div>
         <nav className="flex-1 space-y-1 px-3 py-4">
@@ -70,9 +78,18 @@ export default function AppSidebar() {
           ))}
         </nav>
         <div className="border-t border-border px-4 py-4">
-          <div className="rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground">🌍 Did you know?</p>
-            <p className="mt-1">The average person produces about 4 tons of CO₂ per year.</p>
+          <div className="space-y-3 rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground">
+            <div>
+              <p className="font-medium text-foreground">{currentUser?.username || 'Ecobot User'}</p>
+              <p className="mt-1 truncate">{currentUser?.email || 'Sign in to start tracking'}</p>
+            </div>
+            <div>
+              <p className="font-medium text-foreground">Daily insight</p>
+              <p className="mt-1">Small changes in travel, food, and energy use add up quickly over a week.</p>
+            </div>
+            <Button variant="outline" className="w-full" onClick={() => void logout()}>
+              Log Out
+            </Button>
           </div>
         </div>
       </aside>

@@ -16,6 +16,10 @@ router.post(
       where: { id: req.user!.id },
       include: {
         preferences: true,
+        chatLogs: {
+          orderBy: { timestamp: "desc" },
+          take: 6
+        },
         activities: {
           include: { activity: true },
           orderBy: { createdAt: "desc" },
@@ -24,7 +28,11 @@ router.post(
       }
     });
 
-    const result = await generateSuggestions(userContext.activities, userContext.preferences);
+    const result = await generateSuggestions(
+      userContext.activities,
+      userContext.preferences,
+      userContext.chatLogs
+    );
     res.json(result);
   })
 );
@@ -38,6 +46,10 @@ router.post(
       where: { id: req.user!.id },
       include: {
         preferences: true,
+        chatLogs: {
+          orderBy: { timestamp: "asc" },
+          take: 8
+        },
         activities: {
           include: { activity: true },
           orderBy: { createdAt: "desc" },
@@ -49,7 +61,8 @@ router.post(
     const response = await generateChatResponse({
       message: input.message,
       activities: userContext.activities,
-      preference: userContext.preferences
+      preference: userContext.preferences,
+      chatHistory: userContext.chatLogs
     });
 
     await prisma.chatLog.create({

@@ -1,7 +1,7 @@
-import { Router } from "express";
+import { type Response, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { comparePassword, hashPassword, signToken } from "../utils/auth.js";
+import { comparePassword, createSession, destroySession, hashPassword } from "../utils/auth.js";
 import { ApiError, asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -11,6 +11,20 @@ const authSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(128)
 });
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1).max(128)
+});
+
+function setSessionCookie(res: Response, sessionId: string, expiresAt: Date) {
+  res.cookie("ecobot_session", sessionId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    expires: expiresAt
+  });
+}
 
 router.post(
   "/register",
@@ -34,15 +48,18 @@ router.post(
           create: {
             dietType: "balanced",
             transportMode: "mixed",
-            energyUsageType: "grid"
+            energyUsageType: "grid",
+            units: "metric"
           }
         }
       }
     });
 
-    const safeUser = { id: user.id, name: user.name, email: user.email };
+    const safeUser = { id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin };
+    const session = await createSession(safeUser);
+    setSessionCookie(res, session.sessionId, session.expiresAt);
+
     res.status(201).json({
-      token: signToken(safeUser),
       user: safeUser
     });
   })
@@ -51,7 +68,7 @@ router.post(
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
-    const input = authSchema.omit({ name: true }).parse(req.body);
+    const input = loginSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({
       where: { email: input.email.toLowerCase() }
@@ -61,11 +78,26 @@ router.post(
       throw new ApiError(401, "Invalid email or password");
     }
 
-    const safeUser = { id: user.id, name: user.name, email: user.email };
+    const safeUser = { id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin };
+    const session = await createSession(safeUser);
+    setSessionCookie(res, session.sessionId, session.expiresAt);
+
     res.json({
-      token: signToken(safeUser),
       user: safeUser
     });
+  })
+);
+
+router.post(
+  "/logout",
+  asyncHandler(async (req, res) => {
+    const sessionId = req.cookies?.ecobot_session;
+    if (sessionId) {
+      await destroySession(sessionId);
+    }
+
+    res.clearCookie("ecobot_session");
+    res.json({ ok: true });
   })
 );
 

@@ -26,12 +26,14 @@ async function main() {
     where: { email: "demo@ecobot.app" },
     update: {
       name: "Demo User",
-      passwordHash
+      passwordHash,
+      isAdmin: false
     },
     create: {
       name: "Demo User",
       email: "demo@ecobot.app",
-      passwordHash
+      passwordHash,
+      isAdmin: false
     }
   });
 
@@ -53,13 +55,15 @@ async function main() {
     update: {
       dietType: "flexitarian",
       transportMode: "car + transit",
-      energyUsageType: "grid"
+      energyUsageType: "grid",
+      units: "metric"
     },
     create: {
       userId: demoUser.id,
       dietType: "flexitarian",
       transportMode: "car + transit",
-      energyUsageType: "grid"
+      energyUsageType: "grid",
+      units: "metric"
     }
   });
 
@@ -68,13 +72,38 @@ async function main() {
     update: {
       dietType: "vegetarian",
       transportMode: "bike",
-      energyUsageType: "solar"
+      energyUsageType: "solar",
+      units: "metric"
     },
     create: {
       userId: rivalUser.id,
       dietType: "vegetarian",
       transportMode: "bike",
-      energyUsageType: "solar"
+      energyUsageType: "solar",
+      units: "metric"
+    }
+  });
+
+  await prisma.user.upsert({
+    where: { email: "superuser@ai.com" },
+    update: {
+      name: "Super User",
+      passwordHash: await bcrypt.hash("root", 12),
+      isAdmin: true
+    },
+    create: {
+      name: "Super User",
+      email: "superuser@ai.com",
+      passwordHash: await bcrypt.hash("root", 12),
+      isAdmin: true,
+      preferences: {
+        create: {
+          dietType: "balanced",
+          transportMode: "mixed",
+          energyUsageType: "grid",
+          units: "metric"
+        }
+      }
     }
   });
 

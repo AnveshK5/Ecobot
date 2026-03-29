@@ -7,10 +7,10 @@ import { Bot, Send, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const quickActions = [
-  "I drove 10 miles",
+  "Summarize my footprint this week",
+  "What habit should I change first?",
+  "Is bus better than driving for me?",
   "Remind me to study at 6 PM",
-  "I walked 3 miles",
-  "I ate beef 0.5 kg",
 ];
 
 export default function ChatPage() {
@@ -31,8 +31,8 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] max-w-3xl animate-in fade-in duration-500">
       <div className="mb-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-foreground">EcoMind AI Assistant</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Log activities, set reminders, get eco tips — just chat naturally.</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-foreground">Ecobot Assistant</h1>
+        <p className="text-muted-foreground mt-1 text-sm">Ask natural questions about your habits, footprint, tradeoffs, and sustainability choices.</p>
       </div>
 
       <Card className="flex-1 flex flex-col overflow-hidden border-none shadow-lg">
@@ -42,7 +42,7 @@ export default function ChatPage() {
               <Bot className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <span className="font-semibold">EcoMind AI</span>
+              <span className="font-semibold">Ecobot Assistant</span>
               <span className="text-xs text-muted-foreground ml-2">Online</span>
             </div>
           </CardTitle>
@@ -89,7 +89,7 @@ export default function ChatPage() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Try 'I drove 10 miles' or 'Remind me to study at 6 PM'..."
+            placeholder="Ask anything: 'How can I cut emissions this week?' or 'Is chicken better than beef?'"
             className="rounded-xl"
           />
           <Button onClick={handleSend} size="icon" className="rounded-xl shrink-0">

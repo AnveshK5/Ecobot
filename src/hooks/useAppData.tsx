@@ -1,20 +1,21 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
-  useMemo,
-  useCallback,
   useState,
   type ReactNode
 } from "react";
-import { apiRequest, getStoredToken, setStoredToken } from "@/lib/api";
+import { apiRequest } from "@/lib/api";
 
 type ActivityType = "transport" | "food" | "energy" | "shopping";
+type UnitPreference = "metric" | "imperial";
 
 export interface User {
   user_id: string;
   username: string;
   email: string;
+  is_admin: boolean;
   daily_goal_kgCO2: number;
   created_at: string;
 }
@@ -62,7 +63,7 @@ export interface Preferences {
   energy_usage_type: string;
   receive_tips: boolean;
   notification_time: string;
-  units: string;
+  units: UnitPreference;
 }
 
 type DashboardSummary = {
@@ -72,7 +73,73 @@ type DashboardSummary = {
   timeline: Array<{ date: string; carbonEmission: number }>;
 };
 
+type AdminUserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  isAdmin: boolean;
+  createdAt: string;
+  preferences: {
+    units?: UnitPreference | null;
+    dietType?: string | null;
+    transportMode?: string | null;
+    energyUsageType?: string | null;
+  } | null;
+  counts: {
+    activities: number;
+    chatLogs: number;
+    badges: number;
+  };
+};
+
+type AdminUserDetails = {
+  id: string;
+  name: string;
+  email: string;
+  isAdmin: boolean;
+  createdAt: string;
+  preferences: {
+    units?: UnitPreference | null;
+    dietType?: string | null;
+    transportMode?: string | null;
+    energyUsageType?: string | null;
+  } | null;
+  activities: Array<{
+    id: string;
+    carbonEmission: number;
+    createdAt: string;
+    customInput: Record<string, unknown>;
+    activity: {
+      description: string;
+      type: ActivityType;
+      carbonValue: number;
+    };
+  }>;
+  chatLogs: Array<{
+    id: string;
+    message: string;
+    response: string;
+    timestamp: string;
+  }>;
+  badges: Array<{
+    awardedAt: string;
+    badge: {
+      id: string;
+      key: string;
+      name: string;
+      description: string;
+    };
+  }>;
+  weeklyReports: Array<{
+    id: string;
+    weekStart: string;
+    totalEmission: number;
+    summary: string;
+  }>;
+};
+
 interface AppDataContextType {
+  isAuthenticated: boolean;
   currentUser: User | null;
   activities: Activity[];
   userActivities: UserActivity[];
@@ -80,6 +147,17 @@ interface AppDataContextType {
   tasks: Task[];
   preferences: Preferences | null;
   loading: boolean;
+  authLoading: boolean;
+  authError: string | null;
+  unitPreference: UnitPreference;
+  adminUsers: AdminUserSummary[];
+  adminUserDetails: AdminUserDetails | null;
+  adminLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (payload: { name: string; email: string; password: string }) => Promise<void>;
+  logout: () => Promise<void>;
+  loadAdminUsers: () => Promise<void>;
+  loadAdminUserDetails: (userId: string) => Promise<void>;
   addUserActivity: (activityId: string, quantity: number, notes: string) => Promise<void>;
   addChatMessage: (message: string, sender: "user" | "AI") => void;
   sendChatMessage: (message: string) => Promise<void>;
@@ -128,6 +206,7 @@ type BackendPreferences = {
   dietType?: string | null;
   transportMode?: string | null;
   energyUsageType?: string | null;
+  units?: UnitPreference | null;
 };
 
 type BackendProfile = {
@@ -136,6 +215,7 @@ type BackendProfile = {
     name: string;
     email: string;
     createdAt: string;
+    isAdmin: boolean;
   };
   preferences: BackendPreferences | null;
   badges: Array<{
@@ -219,7 +299,13 @@ function formatUnit(description: string, type: ActivityType) {
   if (lower.includes("kwh")) return "kWh";
   if (lower.includes("therm")) return "therm";
   if (lower.includes("meal")) return "meal";
-  if (lower.includes("ride") || lower.includes("driving") || lower.includes("walking") || lower.includes("cycling") || lower.includes("flight")) {
+  if (
+    lower.includes("ride") ||
+    lower.includes("driving") ||
+    lower.includes("walking") ||
+    lower.includes("cycling") ||
+    lower.includes("flight")
+  ) {
     return "mile";
   }
   return defaultUnits[type];
@@ -282,7 +368,7 @@ function mapPreferences(preferences: BackendPreferences | null, userId: string):
     energy_usage_type: preferences?.energyUsageType ?? "grid",
     receive_tips: true,
     notification_time: "09:00",
-    units: "metric"
+    units: preferences?.units ?? "metric"
   };
 }
 
@@ -311,8 +397,18 @@ function dayLabel(dateString: string) {
   return new Date(dateString).toLocaleDateString("en-US", { weekday: "short" });
 }
 
+function mapCurrentUser(profile: BackendProfile): User {
+  return {
+    user_id: profile.user.id,
+    username: profile.user.name,
+    email: profile.user.email,
+    is_admin: profile.user.isAdmin,
+    daily_goal_kgCO2: 10,
+    created_at: profile.user.createdAt
+  };
+}
+
 export function AppDataProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => getStoredToken());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [userActivities, setUserActivities] = useState<UserActivity[]>([]);
@@ -328,66 +424,155 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [leaderboard, setLeaderboard] = useState<Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }>>([]);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
+  const [adminUserDetails, setAdminUserDetails] = useState<AdminUserDetails | null>(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  const resetAppState = useCallback(() => {
+    setCurrentUser(null);
+    setActivities([]);
+    setUserActivities([]);
+    setChatLog([]);
+    setPreferences(null);
+    setSummary({
+      daily: 0,
+      weekly: 0,
+      monthly: 0,
+      timeline: []
+    });
+    setAiSuggestions([]);
+    setLeaderboard([]);
+    setAdminUsers([]);
+    setAdminUserDetails(null);
+    setTasks(loadTasks());
+  }, []);
+
+  const bootstrap = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [catalog, profile, history, carbon, chats, suggestions, board] = await Promise.all([
+        apiRequest<{ activities: BackendActivity[] }>("/activity/catalog"),
+        apiRequest<BackendProfile>("/user/profile"),
+        apiRequest<{ history: BackendUserActivity[] }>("/activity/history"),
+        apiRequest<DashboardSummary>("/carbon/summary"),
+        apiRequest<{ chats: BackendChat[] }>("/ai/history"),
+        apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
+        apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard")
+      ]);
+
+      setActivities(catalog.activities.map(mapActivity));
+      setCurrentUser(mapCurrentUser(profile));
+      setPreferences(mapPreferences(profile.preferences, profile.user.id));
+      setUserActivities(history.history.map(mapUserActivity));
+      setSummary(carbon);
+      setChatLog(mapChats(chats.chats));
+      setAiSuggestions(suggestions.suggestions);
+      setLeaderboard(board.leaderboard);
+      setAuthError(null);
+    } catch {
+      resetAppState();
+    } finally {
+      setLoading(false);
+    }
+  }, [resetAppState]);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
 
   useEffect(() => {
     saveTasks(tasks);
   }, [tasks]);
 
-  useEffect(() => {
-    async function bootstrap() {
-      try {
-        let activeToken = token;
-
-        if (!activeToken) {
-          const login = await apiRequest<{
-            token: string;
-            user: { id: string; name: string; email: string };
-          }>("/auth/login", {
-            method: "POST",
-            body: {
-              email: import.meta.env.VITE_DEMO_EMAIL || "demo@ecobot.app",
-              password: import.meta.env.VITE_DEMO_PASSWORD || "DemoPass123!"
-            }
-          });
-
-          activeToken = login.token;
-          setStoredToken(activeToken);
-          setToken(activeToken);
-        }
-
-        const [catalog, profile, history, carbon, chats, suggestions, board] = await Promise.all([
-          apiRequest<{ activities: BackendActivity[] }>("/activity/catalog", { token: activeToken }),
-          apiRequest<BackendProfile>("/user/profile", { token: activeToken }),
-          apiRequest<{ history: BackendUserActivity[] }>("/activity/history", { token: activeToken }),
-          apiRequest<DashboardSummary>("/carbon/summary", { token: activeToken }),
-          apiRequest<{ chats: BackendChat[] }>("/ai/history", { token: activeToken }),
-          apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {}, token: activeToken }),
-          apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard", { token: activeToken })
-        ]);
-
-        setActivities(catalog.activities.map(mapActivity));
-        setCurrentUser({
-          user_id: profile.user.id,
-          username: profile.user.name,
-          email: profile.user.email,
-          daily_goal_kgCO2: 10,
-          created_at: profile.user.createdAt
-        });
-        setPreferences(mapPreferences(profile.preferences, profile.user.id));
-        setUserActivities(history.history.map(mapUserActivity));
-        setSummary(carbon);
-        setChatLog(mapChats(chats.chats));
-        setAiSuggestions(suggestions.suggestions);
-        setLeaderboard(board.leaderboard);
-      } catch (error) {
-        console.error("Failed to bootstrap app data", error);
-      } finally {
-        setLoading(false);
-      }
+  const login = useCallback(async (email: string, password: string) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await apiRequest("/auth/login", {
+        method: "POST",
+        body: { email, password }
+      });
+      await bootstrap();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Login failed";
+      setAuthError(message);
+      throw error;
+    } finally {
+      setAuthLoading(false);
     }
+  }, [bootstrap]);
 
-    void bootstrap();
-  }, [token]);
+  const register = useCallback(async (payload: { name: string; email: string; password: string }) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await apiRequest("/auth/register", {
+        method: "POST",
+        body: payload
+      });
+      await bootstrap();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Registration failed";
+      setAuthError(message);
+      throw error;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [bootstrap]);
+
+  const logout = useCallback(async () => {
+    await apiRequest("/auth/logout", { method: "POST" }).catch(() => null);
+    setAuthError(null);
+    resetAppState();
+  }, [resetAppState]);
+
+  const refreshActivityState = useCallback(async () => {
+    const [history, carbon, profile, suggestions, board] = await Promise.all([
+      apiRequest<{ history: BackendUserActivity[] }>("/activity/history"),
+      apiRequest<DashboardSummary>("/carbon/summary"),
+      apiRequest<BackendProfile>("/user/profile"),
+      apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {} }),
+      apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard")
+    ]);
+
+    setCurrentUser(mapCurrentUser(profile));
+    setUserActivities(history.history.map(mapUserActivity));
+    setSummary(carbon);
+    setPreferences((prev) => {
+      const mapped = mapPreferences(profile.preferences, profile.user.id);
+      return prev
+        ? {
+            ...mapped,
+            receive_tips: prev.receive_tips,
+            notification_time: prev.notification_time
+          }
+        : mapped;
+    });
+    setAiSuggestions(suggestions.suggestions);
+    setLeaderboard(board.leaderboard);
+  }, []);
+
+  const loadAdminUsers = useCallback(async () => {
+    setAdminLoading(true);
+    try {
+      const response = await apiRequest<{ users: AdminUserSummary[] }>("/admin/users");
+      setAdminUsers(response.users);
+    } finally {
+      setAdminLoading(false);
+    }
+  }, []);
+
+  const loadAdminUserDetails = useCallback(async (userId: string) => {
+    setAdminLoading(true);
+    try {
+      const response = await apiRequest<{ user: AdminUserDetails }>(`/admin/users/${userId}`);
+      setAdminUserDetails(response.user);
+    } finally {
+      setAdminLoading(false);
+    }
+  }, []);
 
   const addChatMessage = useCallback((message: string, sender: "user" | "AI") => {
     setChatLog((prev) => [
@@ -402,40 +587,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     ]);
   }, [currentUser?.user_id]);
 
-  const refreshActivityState = useCallback(async (activeToken = token) => {
-    if (!activeToken) return;
-
-    const [history, carbon, profile, suggestions, board] = await Promise.all([
-      apiRequest<{ history: BackendUserActivity[] }>("/activity/history", { token: activeToken }),
-      apiRequest<DashboardSummary>("/carbon/summary", { token: activeToken }),
-      apiRequest<BackendProfile>("/user/profile", { token: activeToken }),
-      apiRequest<{ suggestions: string[] }>("/ai/suggestions", { method: "POST", body: {}, token: activeToken }),
-      apiRequest<{ leaderboard: Array<{ userId: string; name: string; averageEmission: number; badgeCount: number }> }>("/carbon/leaderboard", { token: activeToken })
-    ]);
-
-    setUserActivities(history.history.map(mapUserActivity));
-    setSummary(carbon);
-    setPreferences((prev) => {
-      const mapped = mapPreferences(profile.preferences, profile.user.id);
-      return prev
-        ? {
-            ...mapped,
-            receive_tips: prev.receive_tips,
-            notification_time: prev.notification_time,
-            units: prev.units
-          }
-        : mapped;
-    });
-    setAiSuggestions(suggestions.suggestions);
-    setLeaderboard(board.leaderboard);
-  }, [token]);
-
   const addUserActivity = useCallback(async (activityId: string, quantity: number, notes: string) => {
-    if (!token) return;
-
     await apiRequest("/activity/log", {
       method: "POST",
-      token,
       body: {
         activityId,
         quantity,
@@ -447,78 +601,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
 
     await refreshActivityState();
-  }, [refreshActivityState, token]);
-
-  const sendChatMessage = useCallback(async (message: string) => {
-    if (!token || !currentUser) return;
-
-    addChatMessage(message, "user");
-
-    const reminderMatch = message.match(reminderPattern);
-    if (reminderMatch) {
-      const title = reminderMatch[3].trim();
-      const taskTime = reminderMatch[4]?.trim();
-      const date = new Date();
-
-      if (taskTime) {
-        const match = taskTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
-        if (match) {
-          let hours = Number(match[1]);
-          const minutes = Number(match[2] || 0);
-          const suffix = match[3].toLowerCase();
-          if (suffix === "pm" && hours < 12) hours += 12;
-          if (suffix === "am" && hours === 12) hours = 0;
-          date.setHours(hours, minutes, 0, 0);
-        }
-      }
-
-      addTask(title, date.toISOString());
-      addChatMessage(`Reminder set for "${title}".`, "AI");
-      return;
-    }
-
-    const activityMatch = inferActivity(message, activities);
-    if (activityMatch) {
-      await addUserActivity(activityMatch.activity.activity_id, activityMatch.quantity, message);
-      const emission = Number((activityMatch.quantity * activityMatch.activity.emission_factor).toFixed(2));
-      addChatMessage(
-        `${activityMatch.activity.name} logged: ${activityMatch.quantity} ${activityMatch.activity.unit}(s) for ${emission} kg CO2.`,
-        "AI"
-      );
-      return;
-    }
-
-    const response = await apiRequest<{ response: string }>("/ai/chat", {
-      method: "POST",
-      token,
-      body: { message }
-    });
-
-    addChatMessage(response.response, "AI");
-  }, [activities, addChatMessage, currentUser, token]);
-
-  const updatePreferences = useCallback(async (updates: Partial<Preferences>) => {
-    if (!token || !currentUser) return;
-
-    await apiRequest<{ preferences: BackendPreferences }>("/user/preferences", {
-      method: "PUT",
-      token,
-      body: {
-        dietType: updates.diet_type ?? preferences?.diet_type,
-        transportMode: updates.transport_mode ?? preferences?.transport_mode,
-        energyUsageType: updates.energy_usage_type ?? preferences?.energy_usage_type
-      }
-    });
-
-    setPreferences((prev) =>
-      prev
-        ? {
-            ...prev,
-            ...updates
-          }
-        : null
-    );
-  }, [currentUser, preferences?.diet_type, preferences?.energy_usage_type, preferences?.transport_mode, token]);
+  }, [refreshActivityState]);
 
   const addTask = useCallback((title: string, time: string) => {
     setTasks((prev) => [
@@ -534,6 +617,86 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     ]);
   }, [currentUser?.user_id]);
 
+  const sendChatMessage = useCallback(async (message: string) => {
+    if (!currentUser) return;
+
+    addChatMessage(message, "user");
+
+    try {
+      const reminderMatch = message.match(reminderPattern);
+      if (reminderMatch) {
+        const title = reminderMatch[3].trim();
+        const taskTime = reminderMatch[4]?.trim();
+        const date = new Date();
+
+        if (taskTime) {
+          const match = taskTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+          if (match) {
+            let hours = Number(match[1]);
+            const minutes = Number(match[2] || 0);
+            const suffix = match[3].toLowerCase();
+            if (suffix === "pm" && hours < 12) hours += 12;
+            if (suffix === "am" && hours === 12) hours = 0;
+            date.setHours(hours, minutes, 0, 0);
+          }
+        }
+
+        addTask(title, date.toISOString());
+        addChatMessage(`Reminder set for "${title}".`, "AI");
+        return;
+      }
+
+      const activityMatch = inferActivity(message, activities);
+      if (activityMatch) {
+        await addUserActivity(activityMatch.activity.activity_id, activityMatch.quantity, message);
+        addChatMessage(
+          `${activityMatch.activity.name} logged successfully.`,
+          "AI"
+        );
+        return;
+      }
+
+      const response = await apiRequest<{ response: string }>("/ai/chat", {
+        method: "POST",
+        body: { message }
+      });
+
+      addChatMessage(response.response, "AI");
+    } catch (error) {
+      const messageText =
+        error instanceof Error && error.message
+          ? error.message
+          : "I hit a temporary connection issue.";
+      addChatMessage(
+        `${messageText} Please try again in a moment.`,
+        "AI"
+      );
+    }
+  }, [activities, addChatMessage, addTask, addUserActivity, currentUser]);
+
+  const updatePreferences = useCallback(async (updates: Partial<Preferences>) => {
+    if (!currentUser) return;
+
+    await apiRequest<{ preferences: BackendPreferences }>("/user/preferences", {
+      method: "PUT",
+      body: {
+        dietType: updates.diet_type ?? preferences?.diet_type,
+        transportMode: updates.transport_mode ?? preferences?.transport_mode,
+        energyUsageType: updates.energy_usage_type ?? preferences?.energy_usage_type,
+        units: updates.units ?? preferences?.units
+      }
+    });
+
+    setPreferences((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updates
+          }
+        : null
+    );
+  }, [currentUser, preferences]);
+
   const toggleTask = useCallback((taskId: string) => {
     setTasks((prev) =>
       prev.map((task) =>
@@ -547,21 +710,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const totalCO2Today = summary.daily;
-  const totalCO2All = useMemo(
-    () => userActivities.reduce((sum, activity) => sum + activity.co2_emission, 0),
-    [userActivities]
-  );
+  const totalCO2All = userActivities.reduce((sum, activity) => sum + activity.co2_emission, 0);
+  const weeklyData = summary.timeline.map((entry) => ({
+    day: dayLabel(entry.date),
+    co2: entry.carbonEmission
+  }));
 
-  const weeklyData = useMemo(
-    () =>
-      summary.timeline.map((entry) => ({
-        day: dayLabel(entry.date),
-        co2: entry.carbonEmission
-      })),
-    [summary.timeline]
-  );
-
-  const streak = useMemo(() => {
+  const streak = (() => {
     let count = 0;
     const availableDays = new Set(
       userActivities.map((entry) => new Date(entry.timestamp).toISOString().slice(0, 10))
@@ -577,9 +732,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
 
     return count;
-  }, [userActivities]);
+  })();
 
-  const ecoScore = useMemo(() => {
+  const ecoScore = (() => {
     if (!summary.timeline.length) return 100;
     const nonZeroDays = summary.timeline.filter((item) => item.carbonEmission > 0);
     const average = nonZeroDays.length
@@ -587,16 +742,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       : 0;
     if (average === 0) return 100;
     return Math.max(0, Math.min(100, Math.round((1 - average / 15) * 100)));
-  }, [summary.timeline]);
+  })();
 
-  const motivationalMessage = useMemo(() => {
-    if (loading) return "Loading your sustainability dashboard...";
-    if (totalCO2Today === 0) return "Start logging your day to uncover quick carbon-saving wins.";
-    if (totalCO2Today <= 10) return `Nice work. You are ${(10 - totalCO2Today).toFixed(1)} kg under your daily goal today.`;
-    return "You are above your daily goal today. Check the AI suggestions for the easiest category to improve next.";
-  }, [loading, totalCO2Today]);
+  const motivationalMessage =
+    loading
+      ? "Loading your sustainability dashboard..."
+      : totalCO2Today === 0
+        ? "Start logging your day to uncover quick carbon-saving wins."
+        : totalCO2Today <= 10
+          ? "Nice work. You are under your daily goal today."
+          : "You are above your daily goal today. Check the AI suggestions for the easiest category to improve next.";
 
   const value: AppDataContextType = {
+    isAuthenticated: Boolean(currentUser),
     currentUser,
     activities,
     userActivities,
@@ -604,6 +762,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     tasks,
     preferences,
     loading,
+    authLoading,
+    authError,
+    unitPreference: preferences?.units ?? "metric",
+    adminUsers,
+    adminUserDetails,
+    adminLoading,
+    login,
+    register,
+    logout,
+    loadAdminUsers,
+    loadAdminUserDetails,
     addUserActivity,
     addChatMessage,
     sendChatMessage,

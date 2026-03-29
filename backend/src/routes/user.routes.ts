@@ -9,7 +9,8 @@ const router = Router();
 const preferencesSchema = z.object({
   dietType: z.string().min(1).max(50).optional(),
   transportMode: z.string().min(1).max(50).optional(),
-  energyUsageType: z.string().min(1).max(50).optional()
+  energyUsageType: z.string().min(1).max(50).optional(),
+  units: z.enum(["metric", "imperial"]).optional()
 });
 
 router.use(requireAuth);
@@ -30,7 +31,8 @@ router.get(
         id: user.id,
         name: user.name,
         email: user.email,
-        createdAt: user.createdAt
+        createdAt: user.createdAt,
+        isAdmin: user.isAdmin
       },
       preferences: user.preferences,
       badges: user.badges.map((entry) => ({

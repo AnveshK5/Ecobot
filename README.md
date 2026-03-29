@@ -1,18 +1,18 @@
 # AI Sustainable Lifestyle Assistant
 
-This repository now contains:
+This repository contains:
 
-- A Lovable-built React frontend at the repo root
+- A React frontend at the repo root
 - A full Express + Prisma + PostgreSQL backend in [`backend/`](/Users/anveshkasarla/Desktop/Hackathon/Ecobot/backend)
 - OpenAI-powered suggestions/chat with a heuristic fallback
-- JWT authentication, protected routes, seeded demo data, weekly reports, badges, and a leaderboard
+- Session-based authentication, protected routes, seeded demo data, weekly reports, badges, and a leaderboard
 
 ## Architecture
 
 - Frontend: Vite + React + TypeScript
 - Backend: Node.js + Express + TypeScript
 - Database: PostgreSQL + Prisma
-- Auth: JWT + bcrypt
+- Auth: HTTP-only session cookie + bcrypt
 - AI: OpenAI Responses API with in-memory TTL caching
 
 ## Backend API
@@ -34,8 +34,6 @@ This repository now contains:
 
 - Email: `demo@ecobot.app`
 - Password: `DemoPass123!`
-
-The frontend automatically signs in with this seeded demo user if no token exists.
 
 ## Run Locally
 

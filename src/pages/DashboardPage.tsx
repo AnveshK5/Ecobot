@@ -3,14 +3,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Leaf, TrendingUp, Target, Flame, Award, CheckCircle2, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { carbonUnit, convertCarbon } from '@/lib/units';
 
 export default function DashboardPage() {
   const {
     currentUser, userActivities, activities, totalCO2Today, totalCO2All,
-    weeklyData, ecoScore, streak, motivationalMessage, tasks, aiSuggestions, leaderboard,
+    weeklyData, ecoScore, streak, motivationalMessage, tasks, aiSuggestions, leaderboard, unitPreference,
   } = useAppData();
   const goal = currentUser?.daily_goal_kgCO2 || 10;
   const progress = Math.min((totalCO2Today / goal) * 100, 100);
+  const carbonLabel = carbonUnit(unitPreference);
 
   const categoryBreakdown = userActivities.reduce<Record<string, number>>((acc, ua) => {
     const act = activities.find(a => a.activity_id === ua.activity_id);
@@ -29,23 +31,23 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Motivational Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-primary/10 via-primary/5 to-accent/10 border border-primary/20 p-5">
-        <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="rounded-3xl border border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-accent/10 p-5 sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-foreground">
+            <h1 className="text-2xl font-bold text-foreground sm:text-3xl xl:text-4xl">
               Welcome back, {currentUser?.username || 'User'} 🌿
             </h1>
             <p className="text-muted-foreground mt-1 text-sm md:text-base">{motivationalMessage}</p>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-center">
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:gap-4">
+            <div className="rounded-2xl bg-background/60 px-4 py-3 text-center">
               <div className="flex items-center gap-1 text-accent">
                 <Flame className="h-5 w-5" />
                 <span className="text-2xl font-bold">{streak}</span>
               </div>
               <p className="text-xs text-muted-foreground">Day Streak</p>
             </div>
-            <div className="text-center">
+            <div className="rounded-2xl bg-background/60 px-4 py-3 text-center">
               <div className="flex items-center gap-1 text-primary">
                 <Award className="h-5 w-5" />
                 <span className="text-2xl font-bold">{ecoScore}</span>
@@ -57,17 +59,17 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="border-none shadow-md hover:shadow-lg transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground">Today's CO₂</CardTitle>
             <Leaf className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalCO2Today.toFixed(1)} kg</div>
+            <div className="text-2xl font-bold">{convertCarbon(totalCO2Today, unitPreference).toFixed(1)} {carbonLabel}</div>
             <Progress value={progress} className="mt-2 h-2" />
             <p className="text-xs text-muted-foreground mt-1">
-              {progress < 100 ? `${(goal - totalCO2Today).toFixed(1)}kg remaining` : '⚠️ Goal exceeded'}
+              {progress < 100 ? `${convertCarbon(goal - totalCO2Today, unitPreference).toFixed(1)} ${carbonLabel} remaining` : '⚠️ Goal exceeded'}
             </p>
           </CardContent>
         </Card>
@@ -78,7 +80,7 @@ export default function DashboardPage() {
             <Target className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{goal} kg</div>
+            <div className="text-2xl font-bold">{convertCarbon(goal, unitPreference).toFixed(1)} {carbonLabel}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {Math.round(progress)}% used
             </p>
@@ -102,14 +104,14 @@ export default function DashboardPage() {
             <TrendingUp className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalCO2All.toFixed(1)} kg</div>
+            <div className="text-2xl font-bold">{convertCarbon(totalCO2All, unitPreference).toFixed(1)} {carbonLabel}</div>
             <p className="text-xs text-muted-foreground mt-1">{userActivities.length} activities</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Charts Row */}
-      <div className="grid gap-6 lg:grid-cols-5">
+      <div className="grid gap-6 xl:grid-cols-5">
         {/* Weekly Chart */}
         <Card className="lg:col-span-3 border-none shadow-md">
           <CardHeader>
@@ -124,7 +126,7 @@ export default function DashboardPage() {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                    formatter={(value: number) => [`${value} kg`, 'CO₂']}
+                    formatter={(value: number) => [`${convertCarbon(value, unitPreference).toFixed(1)} ${carbonLabel}`, 'CO₂']}
                   />
                   <ReferenceLine y={goal} stroke="hsl(var(--accent))" strokeDasharray="4 4" label={{ value: 'Goal', position: 'right', fontSize: 11 }} />
                   <Bar dataKey="co2" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
@@ -147,7 +149,7 @@ export default function DashboardPage() {
                     <div className={`h-3 w-3 rounded-full ${categoryColors[cat] || 'bg-muted-foreground'}`} />
                     <span className="font-medium">{cat}</span>
                   </div>
-                  <span className="text-muted-foreground">{val.toFixed(1)} kg</span>
+                  <span className="text-muted-foreground">{convertCarbon(val, unitPreference).toFixed(1)} {carbonLabel}</span>
                 </div>
                 <div className="h-2 rounded-full bg-secondary overflow-hidden">
                   <div
@@ -190,7 +192,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 2xl:grid-cols-2">
         <Card className="border-none shadow-md">
           <CardHeader>
             <CardTitle className="text-base">AI Suggestions</CardTitle>
@@ -208,19 +210,23 @@ export default function DashboardPage() {
 
         <Card className="border-none shadow-md">
           <CardHeader>
-            <CardTitle className="text-base">Leaderboard</CardTitle>
+            <CardTitle className="text-base">{currentUser?.is_admin ? 'Leaderboard' : 'Your Standing'}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {leaderboard.length > 0 ? leaderboard.map((entry, index) => (
               <div key={entry.userId} className="flex items-center justify-between rounded-xl bg-secondary/40 px-4 py-3">
                 <div>
-                  <p className="text-sm font-medium">{index + 1}. {entry.name}</p>
+                  <p className="text-sm font-medium">{currentUser?.is_admin ? `${index + 1}. ${entry.name}` : entry.name}</p>
                   <p className="text-xs text-muted-foreground">{entry.badgeCount} badges earned</p>
                 </div>
-                <span className="text-sm font-semibold text-primary">{entry.averageEmission} kg avg</span>
+                <span className="text-sm font-semibold text-primary">{convertCarbon(entry.averageEmission, unitPreference).toFixed(1)} {carbonLabel} avg</span>
               </div>
             )) : (
-              <p className="text-sm text-muted-foreground">Leaderboard data will appear once the backend is connected.</p>
+              <p className="text-sm text-muted-foreground">
+                {currentUser?.is_admin
+                  ? 'Leaderboard data will appear once the backend is connected.'
+                  : 'Your personal standing will appear once you have some activity history.'}
+              </p>
             )}
           </CardContent>
         </Card>

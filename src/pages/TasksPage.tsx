@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ListTodo, Plus, Trash2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 
 export default function TasksPage() {
   const { tasks, addTask, toggleTask, deleteTask } = useAppData();
@@ -27,7 +26,7 @@ export default function TasksPage() {
   const completed = tasks.filter(t => t.completed);
 
   return (
-    <div className="max-w-2xl space-y-6 animate-in fade-in duration-500">
+    <div className="mx-auto w-full max-w-5xl space-y-6 animate-in fade-in duration-500">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold text-foreground">Tasks & Reminders</h1>
         <p className="text-muted-foreground mt-1 text-sm">Stay productive and eco-conscious.</p>
@@ -41,7 +40,7 @@ export default function TasksPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleAdd} className="flex flex-col sm:flex-row gap-3">
+          <form onSubmit={handleAdd} className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_auto]">
             <Input
               value={title}
               onChange={e => setTitle(e.target.value)}
@@ -74,7 +73,7 @@ export default function TasksPage() {
           ) : (
             <div className="space-y-2">
               {pending.map(task => (
-                <div key={task.task_id} className="flex items-center gap-3 rounded-xl bg-secondary/40 px-4 py-3 group hover:bg-secondary/70 transition-colors">
+                <div key={task.task_id} className="flex items-start gap-3 rounded-xl bg-secondary/40 px-4 py-3 group hover:bg-secondary/70 transition-colors sm:items-center">
                   <Checkbox
                     checked={false}
                     onCheckedChange={() => { toggleTask(task.task_id); toast.success('Task completed! 🎉'); }}
@@ -89,7 +88,7 @@ export default function TasksPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="h-8 w-8 shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                     onClick={() => deleteTask(task.task_id)}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -110,7 +109,7 @@ export default function TasksPage() {
           <CardContent>
             <div className="space-y-2">
               {completed.map(task => (
-                <div key={task.task_id} className="flex items-center gap-3 rounded-xl px-4 py-3 opacity-60">
+                <div key={task.task_id} className="flex items-start gap-3 rounded-xl px-4 py-3 opacity-60 sm:items-center">
                   <Checkbox checked onCheckedChange={() => toggleTask(task.task_id)} />
                   <p className="text-sm line-through flex-1 truncate">{task.title}</p>
                   <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteTask(task.task_id)}>

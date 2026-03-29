@@ -2,13 +2,14 @@ import { useState, useMemo } from 'react';
 import { useAppData } from '@/hooks/useAppData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { History, Calendar } from 'lucide-react';
+import { History } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { carbonUnit, convertCarbon, convertDistance, distanceUnit } from '@/lib/units';
 
 type Filter = 'all' | 'today' | 'week' | 'month';
 
 export default function HistoryPage() {
-  const { userActivities, activities } = useAppData();
+  const { userActivities, activities, unitPreference } = useAppData();
   const [filter, setFilter] = useState<Filter>('all');
 
   const filtered = useMemo(() => {
@@ -45,6 +46,7 @@ export default function HistoryPage() {
   ];
 
   const categoryEmoji: Record<string, string> = { Travel: '🚗', Food: '🍽️', Energy: '⚡', Shopping: '🛒' };
+  const carbonLabel = carbonUnit(unitPreference);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -52,10 +54,10 @@ export default function HistoryPage() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-foreground">Activity History</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {enriched.length} activities · {totalFiltered.toFixed(1)} kg CO₂ total
+            {enriched.length} activities · {convertCarbon(totalFiltered, unitPreference).toFixed(1)} {carbonLabel} CO₂ total
           </p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {filters.map(f => (
             <Button
               key={f.key}
@@ -82,22 +84,24 @@ export default function HistoryPage() {
           ) : (
             <div className="divide-y divide-border">
               {enriched.map(item => (
-                <div key={item.log_id} className="flex items-center justify-between py-3.5 group hover:bg-secondary/30 -mx-4 px-4 rounded-lg transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div key={item.log_id} className="flex flex-col gap-3 py-3.5 transition-colors hover:bg-secondary/30 sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:rounded-lg sm:px-4">
+                  <div className="flex min-w-0 items-center gap-3">
                     <span className="text-lg">{categoryEmoji[item.category] || '🌍'}</span>
                     <div className="min-w-0">
                       <p className="font-medium text-sm">{item.activityName}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {item.quantity} {item.unit}(s) · {item.notes}
+                      <p className="text-xs text-muted-foreground sm:truncate">
+                        {item.unit === 'mile'
+                          ? `${convertDistance(item.quantity, unitPreference).toFixed(1)} ${distanceUnit(unitPreference)}`
+                          : `${item.quantity} ${item.unit}(s)`} · {item.notes}
                       </p>
                     </div>
                   </div>
-                  <div className="text-right shrink-0 ml-4">
+                  <div className="shrink-0 text-left sm:ml-4 sm:text-right">
                     <span className={cn(
                       "text-sm font-semibold",
                       item.co2_emission === 0 ? 'text-primary' : 'text-destructive'
                     )}>
-                      {item.co2_emission === 0 ? '0 🌿' : `${item.co2_emission} kg`}
+                      {item.co2_emission === 0 ? '0 🌿' : `${convertCarbon(item.co2_emission, unitPreference).toFixed(1)} ${carbonLabel}`}
                     </span>
                     <p className="text-[10px] text-muted-foreground">
                       {new Date(item.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}

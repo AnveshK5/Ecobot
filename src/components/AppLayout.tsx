@@ -5,8 +5,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
-      <main className="flex-1 md:ml-64 pt-16 md:pt-0 p-4 md:p-8 max-w-5xl">
-        {children}
+      <main className="min-w-0 flex-1 md:ml-64">
+        <div className="mx-auto w-full max-w-7xl px-4 pb-8 pt-20 sm:px-6 md:px-8 md:pt-8 xl:px-10">
+          {children}
+        </div>
       </main>
     </div>
   );

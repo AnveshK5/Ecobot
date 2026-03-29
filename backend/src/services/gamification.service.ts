@@ -91,3 +91,35 @@ export async function getLeaderboard(limit = 10) {
     .sort((a, b) => a.averageEmission - b.averageEmission)
     .slice(0, limit);
 }
+
+export async function getUserLeaderboardEntry(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      activities: {
+        select: { carbonEmission: true }
+      },
+      badges: {
+        include: { badge: true }
+      }
+    }
+  });
+
+  if (!user) {
+    return [];
+  }
+
+  const total = user.activities.reduce((sum, item) => sum + item.carbonEmission, 0);
+  const average = user.activities.length ? total / user.activities.length : total;
+
+  return [
+    {
+      userId: user.id,
+      name: user.name,
+      averageEmission: Number(average.toFixed(2)),
+      badgeCount: user.badges.length
+    }
+  ];
+}
